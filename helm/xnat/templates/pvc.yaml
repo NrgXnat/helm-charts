@@ -1,0 +1,28 @@
+{{- $context := . -}}
+{{- range $name, $c := .Values.volumes }}
+{{- if .existingClaim }}
+{{- else if .size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "xnat.fullname" $context }}-{{ $name }}
+  labels:
+    {{- include "xnat.labels" $context | nindent 4 }}
+spec:
+  accessModes: [ {{ $c.accessMode | quote }} ]
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: {{ $c.size | quote }}
+  {{- if or $c.nfs $c.hostVolume }}
+  volumeName: {{ include "xnat.fullname" $context }}-{{ $name }}
+  storageClassName: ""
+  {{- else if eq $c.storageClass "csi-cephfs-sc" }}
+  volumeName: {{ include "xnat.fullname" $context }}-{{ $name }} 
+  storageClassName: {{ $c.storageClass }}
+  {{- else if $c.storageClass }}
+  storageClassName: {{ $c.storageClass }}
+  {{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,42 @@
+{{- $context := . -}}
+{{- range $name, $c := .Values.volumes }}
+{{- if .existingClaim }}
+{{- else if .nfs }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "xnat.fullname" $context }}-{{ $name }}
+  labels:
+    {{- include "xnat.labels" $context | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ $c.size | quote }}
+  volumeMode: Filesystem
+  accessModes: [ {{ $c.accessMode | quote }} ]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions: {{ $context.Values.nfs.mountOptions }}
+  nfs:
+    server: {{ $context.Values.nfs.server }}
+    path: "{{ $context.Values.nfs.pathPrefix }}/{{ $name }}"
+{{- else if .hostVolume }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "xnat.fullname" $context | nindent 4 }}-{{ $name }}
+  labels:
+    {{- include "xnat.labels" $context | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ $c.size | quote }}
+  claimRef:
+    name: {{ include "xnat.fullname" $context }}-{{ $name }}
+    namespace: {{ $context.Values.namespace }}
+  accessModes: [ {{ $c.accessMode | quote }} ] 
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: "{{ $c.rootPath }}"
+{{- end }}
+{{- end }}

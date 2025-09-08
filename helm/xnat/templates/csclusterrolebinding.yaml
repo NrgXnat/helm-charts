@@ -1,0 +1,14 @@
+{{- if .Values.containerService }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster_service_ready_binding
+subjects:
+- kind: ServiceAccount
+  name: {{ include "xnat.serviceAccountName" . }}
+  namespace: {{ .Values.namespace }}
+roleRef:
+  kind: ClusterRole
+  name: cluster_service_ready
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

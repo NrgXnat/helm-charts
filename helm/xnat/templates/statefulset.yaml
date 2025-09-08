@@ -1,0 +1,256 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "xnat.fullname" . }}
+  labels:
+    {{- include "xnat.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.nodeName }}
+  replicas: 1
+  {{- else if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "xnat.statefulsetLabels" . | nindent 6 }}
+  serviceName: {{ include "xnat.fullname" . }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.podAnnotations }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "xnat.statefulsetLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{ if .Values.hostAliases }}
+      hostAliases:
+      {{- range $value, $v := .Values.hostAliases }}
+      - hostnames:
+        - {{ $v.hostname }}
+        ip: {{ $v.ip }}
+      {{- end }}
+      {{- end }}
+      serviceAccountName: {{ include "xnat.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.nodeName }}
+      hostNetwork: true
+      nodeName: {{ .Values.nodeName }}
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /app/template/Login.vm#!
+              port: http
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /app/template/Login.vm#!
+              port: http
+          startupProbe:
+            httpGet:
+              path: /app/template/Login.vm#!
+              port: http
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: passwd
+              mountPath: /etc/passwd
+              readOnly: true
+              subPath: passwd
+            {{- if .Values.prefs_init }}
+            - name: prefs-init
+              mountPath: /data/xnat/home/config/prefs-init.ini
+              readOnly: true
+              subPath: prefs-init.ini
+            {{- end }}
+            - name: tomcat
+              mountPath: /usr/local/tomcat
+            - name: conf-catalina
+              mountPath: /usr/local/tomcat/conf/Catalina
+            - name: xnat-home
+              mountPath: /data/xnat/home
+            - name: home-plugins
+              mountPath: /data/xnat/home/plugins
+            - name: xnat-config
+              mountPath: "/data/xnat/home/config/xnat-conf.properties"
+              readOnly: true
+              subPath: "xnat-conf.properties"
+            {{- range $plugin, $p := .Values.authplugins }}
+            {{- if .auth }}
+            - name: auth-{{ $p.provider }}
+              mountPath: /data/xnat/home/config/auth/{{ $p.provider }}-provider.properties
+              readOnly: true
+              subPath: {{ $p.provider }}-provider.properties
+            {{- end }}
+            {{- end }}
+            {{- if ne .Values.dicomWeb "none" }}
+            - name: dicomweb-auth
+              mountPath: /data/xnat/home/config/auth/dicomweb-auth.json
+              readOnly: true
+              subPath: dicomweb-auth.json
+            {{- end }}
+            {{- if .Values.setenv }}
+            - name: setenv
+              mountPath: /usr/local/tomcat/bin/setenv.sh
+              readOnly: true
+              subPath: setenv.sh
+            {{- end }}
+            {{- range $name, $c := .Values.persistence }}
+            {{- if $c.size }}
+            - mountPath: {{ $c.mountPath | quote }}
+              name: {{ $name | quote }}
+            {{- end }}
+            {{- end }}
+            {{- range $name, $c := .Values.volumes }}
+            {{- if $c.size }}
+            - mountPath: {{ $c.mountPath | quote }}
+              name: {{ $name | quote }}
+              {{- if $c.mountPropagation }}
+              mountPropagation: {{$c.mountPropagation|default "None"|quote}}
+              {{- end }}
+            {{- end }}
+            {{- end }}
+      initContainers:
+        {{- range $plugin, $c := .Values.plugins }}
+        - name: {{ $plugin }}
+          image: "{{ $c.repository }}:{{ $c.tag }}"
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          volumeMounts:
+            - name: home-plugins
+              mountPath: /data/xnat/home/plugins
+        {{- end }}
+        - name: home-init
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - 'bash'
+            - '-c'
+            - |
+              set -x
+              shopt -s extglob
+              # Copy Tomcat folder
+              [ -d /TOMCAT ] && cp -r --preserve=mode,timestamps /usr/local/tomcat/* /TOMCAT
+              chown -R {{ default "1000" .Values.securityContext.runAsUser }} /TOMCAT
+              # Copy XNAT_HOME directory excluding the plugins folder
+              cp -r --preserve=mode,timestamps ${XNAT_HOME}/!(plugins) /XNAT_HOME
+              chown -R {{ default "1000" .Values.securityContext.runAsUser }} /XNAT_HOME
+              chown -R {{ default "1000" .Values.securityContext.runAsUser }} /HOME-PLUGINS
+           
+          volumeMounts:
+            - name: tomcat
+              mountPath: /TOMCAT
+            - name: xnat-home
+              mountPath: /XNAT_HOME
+            - name: home-plugins
+              mountPath: /HOME-PLUGINS
+      volumes:
+        - name: passwd
+          configMap:
+            name: {{ include "xnat.fullname" . }}
+            items:
+              - key: passwd
+                path: passwd
+        {{- if .Values.prefs_init }}
+        - name: prefs-init.ini
+          configMap:
+            name: prefs_init
+            items:
+              - key: prefs-init
+                path: prefs-init
+        {{- end }}
+        - name: tomcat
+          emptyDir: {}
+        # SEVERE: Unable to create directory for deployment: [/usr/local/tomcat/conf/Catalina/localhost]
+        - name: conf-catalina
+          emptyDir: {}
+        - name: xnat-home
+          emptyDir: {}
+        - name: home-plugins
+          emptyDir: {}
+        {{- range $plugin, $p := .Values.authplugins }}
+        {{- if $p.auth }}
+        - name: auth-{{ $p.provider }}
+          secret:
+            secretName: xnat-plugin-{{ $plugin }}
+            items:
+              - key: {{ $p.provider }}-provider-properties
+                path: {{ $p.provider }}-provider.properties
+        {{- end }}
+        {{- end }}
+        {{- if .Values.setenv }}
+        - name: setenv
+          secret:
+            secretName: setenv
+            items: 
+              - key: options
+                path: setenv.sh
+        {{- end }}
+        {{- if ne .Values.dicomWeb "none" }}
+        - name: dicomweb-auth
+          secret:
+            secretName: {{ .Values.dicomWeb }}
+            items:
+              - key: dicomweb-auth
+                path: dicomweb-auth.json
+        {{- end }}
+        - name: xnat-config
+          secret:
+            secretName: {{ include "xnat.fullname" . }}
+        {{- $context := . -}}
+        {{- range $name, $c := .Values.volumes }}
+        {{- if $c.size }}
+        - name: {{ $name }}
+          persistentVolumeClaim:
+            claimName: {{ $c.existingClaim | default (printf "%s-%s" (include "xnat.fullname" $context) $name) }}
+        {{- end }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    {{- range $name, $c := .Values.persistence }}
+    {{- if not $c.existingClaim }}
+    {{- if $c.size }}
+    - metadata:
+        name: {{ $name | quote }}
+      spec:
+        accessModes: [ {{ $c.accessMode | quote }} ]
+        {{- if (or $c.storageClass $.Values.global.storageClass) }}
+        storageClassName: {{ $c.storageClass | default $.Values.global.storageClass | quote }}
+        {{- end }}
+        volumeMode: Filesystem
+        resources:
+          requests:
+            storage: {{ $c.size }}
+    {{- end }}
+    {{- end }}
+    {{- end }}

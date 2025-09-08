@@ -1,0 +1,263 @@
+# Default values for xnat.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+global:
+  postgresql:
+    service:
+      ports:
+        postgresql: 5432
+
+mail:
+  existingSecret: postfix-password
+  config:
+    general:
+      ALLOWED_SENDER_DOMAINS: "xnat.org"
+      RELAYHOST: "smtp.myrelay.net:587"
+      RELAYHOST_USERNAME: apikey
+      #RELAYHOST_PASSWORD: ${RELAYHOST_PASSWORD}
+      MASQUERADED_DOMAINS: "xnat.org"
+
+activemq-artemis:
+  image:
+    repository: kahootali/activemq-artemis-docker
+    pullPolicy: Always
+    tag: "v2.19.0"
+  artemisUser: admin
+  # artemisPassword sets the artemis admin user password
+  artemisPassword: admin
+  env:
+  - name: DISABLE_SECURITY
+    value: "false"  # never set to true in production
+  replicas: 1
+  persistence:
+    enabled: false
+
+replicaCount: 1
+
+image:
+  repository: xnatworks/xnat-web
+  # Overrides the image tag whose default is the chart appVersion.
+  pullPolicy: IfNotPresent
+  tag: "1.9.2.1"
+
+nameOverride: ""
+fullnameOverride: ""
+
+redis:
+  enabled: true
+  pullPolicy: IfNotPresent
+  master:
+    masterCount: 1
+    persistence:
+      enabled: false
+  replica:
+    replicaCount: 0
+    persistence:
+      enabled: false
+
+amq:
+  enabled: true
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+service:
+  port: 80
+  type: ClusterIP
+
+ingress:
+  enabled: false
+#  annotations:
+#    kubernetes.io/ingress.class: nginx
+#    kubernetes.io/tls-acme: "true"
+#    nginx.ingress.kubernetes.io/whitelist-source-range: "0.0.0.0/0"
+#    nginx.ingress.kubernetes.io/proxy-connect-timeout: "150"
+#    nginx.ingress.kubernetes.io/proxy-send-timeout: "100"
+#    nginx.ingress.kubernetes.io/proxy-read-timeout: "100"
+#    nginx.ingress.kubernetes.io/proxy-buffers-number: "4"
+#    nginx.ingress.kubernetes.io/proxy-buffer-size: "32k"
+#    nginx.ingress.kubernetes.io/client_max_body_size: "0"
+#    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+#    nginx.ingress.kubernetes.io/affinity: "cookie"
+#    nginx.ingress.kubernetes.io/session-cookie-name: "JSESSIONID"
+#    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+#    alb.ingress.kubernetes.io/scheme: internet-facing
+#    alb.ingress.kubernetes.io/target-type: ip
+#    alb.ingress.kubernetes.io/group.name: frontend
+#    alb.ingress.kubernetes.io/certificate-arn: 'arn:aws:acm:us-east-1:633154838680:certificate/cb897014-c427-4fb0-aa90-c66afffdcf2c'
+#    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+
+#
+#  hosts:
+#    - host: "xnat.local"
+#  tls:
+#    - secretName: devcert
+#      hosts:
+#        - xnat.local
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+# -- use this to specify a single node on which to run XNAT in host network mode
+nodeName:
+
+tolerations: []
+
+affinity: {}
+
+
+#persistence:
+  #  cache:
+  #  accessMode: ReadWriteOnce
+  #  mountPath: "/data/xnat/cache"
+  #  storageClass: "xnatcache"
+  #  size: 10Gi
+
+
+# when using an NFS server securityContext.runAsUser and podSecurityContext.fsGroup
+# must be set to align with the UID and GID expected by the share on the NFS server
+nfs:
+  server:
+  pathPrefix: ""
+  mountOptions: []
+
+volumes:
+  xnatdata:
+    nfs: false
+    hostVolume: false
+    existingClaim:
+    accessMode: ReadWriteMany
+    mountPath: "/data/xnat"
+    storageClass: "default"
+    size: 100Gi
+  build:
+    nfs: false
+    hostVolume: false
+    existingClaim:
+    accessMode: ReadWriteMany
+    mountPath: "/data/xnat/build"
+    storageClass: "default"
+    size: 100Gi
+  cache:
+    nfs: false
+    hostVolume: false
+    existingClaim:
+    accessMode: ReadWriteMany
+    mountPath: "/data/xnat/cache"
+    storageClass: "default"
+    size: 1Ti
+  archive:
+    nfs: false
+    hostVolume: false
+    existingClaim:
+    accessMode: ReadWriteMany
+    mountPath: "/data/xnat/archive"
+    storageClass: "default"
+    size: 100Gi
+  prearchive:
+    nfs: false
+    hostVolume: false
+    existingClaim:
+    accessMode: ReadWriteMany
+    mountPath: "/data/xnat/prearchive"
+    storageClass: "default"
+    size: 1Ti
+
+plugins: []
+  # container-service:
+  #  repository: radiologicsit/container-service
+  #  tag: "3.3.0"
+containerService: false
+namespace: ""
+authplugins: []
+dicomWeb: "none"
+setenv: false
+
+# DICOM C-STORE Service Class Provider (SCP)
+# DICOM Application Entity (AE)
+dicom_scp:
+  serviceType: "NodePort"
+  annotations: {}
+  #  metallb.universe.tf/address-pool: production-public-ips
+  #  metallb.universe.tf/allow-shared-ip: true
+  recievers:
+    - ae_title: "XNAT"
+      port: 8104
+      # nodePort: 32514
+      # loadBalancerIp: "130.95.27.91"
+
+postgresql:
+  image:
+    repository: bitnami/postgresql
+    tag: 16.6.0-debian-12-r1
+  enabled: true
+  postgresqlDatabase: "xnat-web"
+  postgresqlUsername: "xnat-web"
+  postgresqlPassword: "xnat-web"
+  persistence:
+    enabled: true
+    storageClass: default
+  auth:
+    postgresPassword: "xnat-web"
+    password: "xnat-web"
+    database: "xnat-web"
+    username: "xnat-web"
+
+probes:
+  startup:
+    # adjust below values to suit the startup time. Below startup time is 15*10=150s
+    failureThreshold: 15
+    periodSeconds: 10
+    timeoutSeconds: 30
+  liveness:
+    failureThreshold: 1
+    periodSeconds: 10
+    timeoutSeconds: 30
+
+restore: false
+backups:
+  backupStorageAccount:
+  dbdmstoken:
+  arcdmstoken:
+#Used for any variables that change between cloud services
+serviceProvider:
+ name:
+#  backupMount: archive
