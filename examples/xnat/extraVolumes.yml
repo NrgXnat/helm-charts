@@ -1,0 +1,33 @@
+extraVolumes:
+  - name: prefs-init.ini
+    configMap:
+      name: prefs_init
+      items:
+        - key: prefs-init
+          path: prefs-init
+  - name: setenv
+    secret:
+      secretName: setenv
+      items: 
+        - key: options
+          path: setenv.sh
+  - name: dicomweb-auth
+    secret:
+      secretName: dicomweb
+      items:
+        - key: dicomweb-auth
+          path: dicomweb-auth.json
+
+extraVolumeMounts:
+  - name: prefs-init
+    mountPath: /data/xnat/home/config/prefs-init.ini
+    readOnly: true
+    subPath: prefs-init.ini
+  - name: dicomweb-auth
+    mountPath: /data/xnat/home/config/auth/dicomweb-auth.json
+    readOnly: true
+    subPath: dicomweb-auth.json
+  - name: setenv
+    mountPath: /usr/local/tomcat/bin/setenv.sh
+    readOnly: true
+    subPath: setenv.sh

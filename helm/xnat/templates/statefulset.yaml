@@ -77,12 +77,6 @@ spec:
               mountPath: /etc/passwd
               readOnly: true
               subPath: passwd
-            {{- if .Values.prefs_init }}
-            - name: prefs-init
-              mountPath: /data/xnat/home/config/prefs-init.ini
-              readOnly: true
-              subPath: prefs-init.ini
-            {{- end }}
             - name: tomcat
               mountPath: /usr/local/tomcat
             - name: conf-catalina
@@ -103,17 +97,8 @@ spec:
               subPath: {{ $p.provider }}-provider.properties
             {{- end }}
             {{- end }}
-            {{- if ne .Values.dicomWeb "none" }}
-            - name: dicomweb-auth
-              mountPath: /data/xnat/home/config/auth/dicomweb-auth.json
-              readOnly: true
-              subPath: dicomweb-auth.json
-            {{- end }}
-            {{- if .Values.setenv }}
-            - name: setenv
-              mountPath: /usr/local/tomcat/bin/setenv.sh
-              readOnly: true
-              subPath: setenv.sh
+            {{- with .Values.extraVolumeMounts }}
+            {{- . | toYaml | nindent 12 }}
             {{- end }}
             {{- range $name, $c := .Values.persistence }}
             {{- if $c.size }}
@@ -170,14 +155,6 @@ spec:
             items:
               - key: passwd
                 path: passwd
-        {{- if .Values.prefs_init }}
-        - name: prefs-init.ini
-          configMap:
-            name: prefs_init
-            items:
-              - key: prefs-init
-                path: prefs-init
-        {{- end }}
         - name: tomcat
           emptyDir: {}
         # SEVERE: Unable to create directory for deployment: [/usr/local/tomcat/conf/Catalina/localhost]
@@ -187,6 +164,9 @@ spec:
           emptyDir: {}
         - name: home-plugins
           emptyDir: {}
+        {{- with .Values.extraVolumes }}
+        {{- . | toYaml | nindent 8 }}
+        {{- end }}
         {{- range $plugin, $p := .Values.authplugins }}
         {{- if $p.auth }}
         - name: auth-{{ $p.provider }}
@@ -196,22 +176,6 @@ spec:
               - key: {{ $p.provider }}-provider-properties
                 path: {{ $p.provider }}-provider.properties
         {{- end }}
-        {{- end }}
-        {{- if .Values.setenv }}
-        - name: setenv
-          secret:
-            secretName: setenv
-            items: 
-              - key: options
-                path: setenv.sh
-        {{- end }}
-        {{- if ne .Values.dicomWeb "none" }}
-        - name: dicomweb-auth
-          secret:
-            secretName: {{ .Values.dicomWeb }}
-            items:
-              - key: dicomweb-auth
-                path: dicomweb-auth.json
         {{- end }}
         - name: xnat-config
           secret:
