@@ -1,4 +1,4 @@
-{{- if .Values.postgresql.enabled }}
+{{- if not .Values.postgresql.enabled }}
 {{- else }}
 apiVersion: v1
 kind: Service
