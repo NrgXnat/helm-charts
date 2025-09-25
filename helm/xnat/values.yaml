@@ -205,6 +205,14 @@ volumes:
 extraVolumes: []
 extraVolumeMounts: []
 
+# Extra lines can be added to the config secret 
+extraConfig: []
+# "key": "value"
+
+# Setting to false will prevent creation of the config secret.
+# A secret with the contents of xnat-conf.properties named the same as the release name will need to be created manually.
+createConfigSecret: true
+
 plugins: []
   # container-service:
   #  repository: radiologicsit/container-service
