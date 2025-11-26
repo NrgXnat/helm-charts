@@ -124,6 +124,10 @@ spec:
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
         {{- end }}
+        {{- if .Values.initContainers }}
+        {{- with .Values.initContainers }}
+        {{- . | toYaml | nindent 8 }}
+        {{- end }}
         - name: home-init
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -136,11 +140,25 @@ spec:
               # Copy Tomcat folder
               [ -d /TOMCAT ] && cp -r --preserve=mode,timestamps /usr/local/tomcat/* /TOMCAT
               chown -R {{ default "1000" .Values.securityContext.runAsUser }} /TOMCAT
+              # Setup xnat-conf.properties
+              readarray -d - -t REP <<< "${POD_NAME}"
+              cp /tmp/xnat-conf.properties ${XNAT_HOME}/config/xnat-conf.properties
+              if [[ "${REP[-1]}" -eq "0" ]]; then
+                echo "xnat.is_primary_node=true" >> ${XNAT_HOME}/config/xnat-conf.properties
+              else
+                echo "xnat.is_primary_node=false" >> ${XNAT_HOME}/config/xnat-conf.properties
+              fi
+              echo "node.id=$(hostname)" > ${XNAT_HOME}/config/node-conf.properties
               # Copy XNAT_HOME directory excluding the plugins folder
               cp -r --preserve=mode,timestamps ${XNAT_HOME}/!(plugins) /XNAT_HOME
               chown -R {{ default "1000" .Values.securityContext.runAsUser }} /XNAT_HOME
               chown -R {{ default "1000" .Values.securityContext.runAsUser }} /HOME-PLUGINS
-           
+          env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: metadata.name           
           volumeMounts:
             - name: tomcat
               mountPath: /TOMCAT
