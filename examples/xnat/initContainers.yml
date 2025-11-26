@@ -5,7 +5,7 @@ initContainers:
     - aws
     - s3
     - sync
-    - s3://adapt-dev-de9a1a4f-development/plugins/
+    - s3://bucket/plugins/
     - /data/xnat/home/plugins/
     image: amazon/aws-cli
     imagePullPolicy: IfNotPresent
