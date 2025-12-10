@@ -85,10 +85,6 @@ spec:
               mountPath: /data/xnat/home
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
-            - name: xnat-config
-              mountPath: "/data/xnat/home/config/xnat-conf.properties"
-              readOnly: true
-              subPath: "xnat-conf.properties"
             {{- range $plugin, $p := .Values.authplugins }}
             {{- if .auth }}
             - name: auth-{{ $p.provider }}
@@ -167,6 +163,11 @@ spec:
               mountPath: /XNAT_HOME
             - name: home-plugins
               mountPath: /HOME-PLUGINS
+            - name: xnat-config
+              mountPath: /tmp/xnat-conf.properties
+              readOnly: true
+              subPath: xnat-conf.properties
+
       volumes:
         - name: passwd
           configMap:
