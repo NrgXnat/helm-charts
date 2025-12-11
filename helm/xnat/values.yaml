@@ -205,6 +205,9 @@ volumes:
 extraVolumes: []
 extraVolumeMounts: []
 
+#Extra init containers can be defined here
+initContainers: []
+
 # Extra lines can be added to the config secret 
 extraConfig: []
 # "key": "value"
