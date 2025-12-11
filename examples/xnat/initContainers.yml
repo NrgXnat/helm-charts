@@ -1,0 +1,17 @@
+# To insert additional init containers aside from plugin installers, for example to download a plugin from somewhere else
+initContainers:
+  - name: develop-plugins
+    command:
+    - aws
+    - s3
+    - sync
+    - s3://bucket/plugins/
+    - /data/xnat/home/plugins/
+    image: amazon/aws-cli
+    imagePullPolicy: IfNotPresent
+    resources: {}
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /data/xnat/home/plugins
+      name: home-plugins
