@@ -32,9 +32,9 @@ dependencies:
   repository: "https://charts.bitnami.com/bitnami"
   condition: redis.enabled
 - name: activemq-artemis
-  version: "1.0.1"
-  repository: "https://kahootali.github.io/activemq-artemis-helm/"
-  condition: amq.enabled
+  version: "2.1.1"
+  repository: "oci://quay.io/arkmq-org/helm-charts/arkmq-org-broker-operator"
+  condition: activemq-artemis.enabled
 - name: mail
   repository: "https://bokysan.github.io/docker-postfix/"
   version: "3.6.1"
