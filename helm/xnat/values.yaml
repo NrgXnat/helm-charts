@@ -18,10 +18,7 @@ mail:
       MASQUERADED_DOMAINS: "xnat.org"
 
 activemq-artemis:
-  image:
-    repository: kahootali/activemq-artemis-docker
-    pullPolicy: Always
-    tag: "v2.19.0"
+  enabled: true
   artemisUser: admin
   # artemisPassword sets the artemis admin user password
   artemisPassword: admin
@@ -54,10 +51,6 @@ redis:
     replicaCount: 0
     persistence:
       enabled: false
-
-amq:
-  enabled: true
-  pullPolicy: IfNotPresent
 
 serviceAccount:
   # Specifies whether a service account should be created

@@ -1,0 +1,18 @@
+{{- if .Values.activemq-artemis.enabled -}}
+apiVersion: broker.amq.io/v1beta1
+kind: ActiveMQArtemis
+metadata:
+  name: activemq-artemis
+  labels:
+    {{- include "xnat.labels" . | nindent 4 }}
+spec:
+  acceptors:
+    - bindToAllInterfaces: true
+      name: acceptall
+      port: 62626
+  deploymentPlan:
+    requireLogin: true
+  adminUser: "{{ .Values.activemq-artemis.artemisUser }}"
+  adminPassword: "{{ .Values.activemq-artemis.artemisPassword }}"
+{{- else }}
+{{- end }}
