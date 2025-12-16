@@ -34,7 +34,7 @@ dependencies:
 - name: activemq-artemis
   version: "2.1.1"
   repository: "oci://quay.io/arkmq-org/helm-charts/arkmq-org-broker-operator"
-  condition: activemq-artemis.enabled
+  condition: activemq.operator.enabled
 - name: mail
   repository: "https://bokysan.github.io/docker-postfix/"
   version: "3.6.1"
