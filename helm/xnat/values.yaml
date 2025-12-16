@@ -17,17 +17,14 @@ mail:
       #RELAYHOST_PASSWORD: ${RELAYHOST_PASSWORD}
       MASQUERADED_DOMAINS: "xnat.org"
 
-activemq-artemis:
-  enabled: true
-  artemisUser: admin
-  # artemisPassword sets the artemis admin user password
-  artemisPassword: admin
-  env:
-  - name: DISABLE_SECURITY
-    value: "false"  # never set to true in production
+activemq:
+  operator:
+    enabled: true
+  broker:
+    enabled: true
+    user: admin
+    password: admin
   replicas: 1
-  persistence:
-    enabled: false
 
 replicaCount: 1
 
