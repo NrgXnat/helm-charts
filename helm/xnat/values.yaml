@@ -24,7 +24,6 @@ activemq:
     enabled: true
     user: admin
     password: admin
-  replicas: 1
 
 replicaCount: 1
 
