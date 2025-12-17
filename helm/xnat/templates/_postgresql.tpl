@@ -5,6 +5,14 @@ Create the name of the PostgreSQL service account to use
 {{- printf "%s-%s" .Release.Name "postgresql" | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "xnat.postgresql.postgresqlUri" -}}
+{{- if .Values.postgresql.external.postgresqlUri }}
+{{- .Values.postgresql.external.postgresqlUri }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name "postgresql" | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end -}}
+
 {{- define "xnat.postgresql.postgresqlDatabase" -}}
 {{- if .Values.global.postgresql.postgresqlDatabase }}
 {{- .Values.global.postgresql.postgresqlDatabase }}
