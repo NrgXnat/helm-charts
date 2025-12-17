@@ -234,6 +234,8 @@ postgresql:
   postgresqlDatabase: "xnat-web"
   postgresqlUsername: "xnat-web"
   postgresqlPassword: "xnat-web"
+  external:
+    postgresqlUri: Null
   persistence:
     enabled: true
     storageClass: default
