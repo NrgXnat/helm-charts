@@ -4,6 +4,9 @@ metadata:
   name: {{ include "xnat.fullname" . }}
   labels:
     {{- include "xnat.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
 spec:
   {{- if .Values.nodeName }}
   replicas: 1
