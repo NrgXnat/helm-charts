@@ -25,6 +25,7 @@ activemq:
     enabled: true
     user: admin
     password: ""
+    port: "62626"
   existingSecret:
     name: ""
     key: ""
