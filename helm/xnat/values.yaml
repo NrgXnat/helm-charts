@@ -17,12 +17,12 @@ mail:
       #RELAYHOST_PASSWORD: ${RELAYHOST_PASSWORD}
       MASQUERADED_DOMAINS: "xnat.org"
 
+# In order to use the following activemq section you must install the Ark-MQ broker found at
+# https://github.com/arkmq-org/activemq-artemis-operator/blob/main/docs/getting-started/quick-start.md
 # You must set one of either broker.password or existingSecret
 activemq:
-  operator:
-    enabled: true
   broker:
-    enabled: true
+    enabled: false
     user: admin
     password: ""
     port: "62626"
