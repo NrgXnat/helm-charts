@@ -12,7 +12,7 @@ spec:
   acceptors:
     - bindToAllInterfaces: true
       name: xnat
-      port: "{{ .Values.activemq.broker.port }}"
+      port: {{ .Values.activemq.broker.port | int }}
   deploymentPlan:
     requireLogin: true
   env:
