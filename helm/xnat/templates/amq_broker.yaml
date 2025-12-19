@@ -22,8 +22,8 @@ spec:
 {{- if .Values.activemq.existingSecret.name }}
       valueFrom:
         secretKeyRef:
-          name: "{{ .Values.activemq.externalSecret.name }}"
-          key: "{{ .Values.activemq.externalSecret.key }}"
+          name: "{{ .Values.activemq.existingSecret.name }}"
+          key: "{{ .Values.activemq.existingSecret.key }}"
 {{- else }}
       value:  "{{ .Values.activemq.broker.password }}"
 {{- end }}
