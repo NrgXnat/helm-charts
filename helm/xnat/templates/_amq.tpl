@@ -3,5 +3,6 @@
 {{- end -}}
 
 {{- define "xnat.activemq.password" -}}
+{{- if .Values.activemq.broker.password }}
 {{- .Values.activemq.broker.password }}
 {{- end -}}
