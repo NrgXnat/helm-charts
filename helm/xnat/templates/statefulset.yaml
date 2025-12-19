@@ -130,7 +130,7 @@ spec:
             - '-c'
             - |
               echo "Waiting for ActiveMQ broker to be ready..."
-              until kubectl get pod activemq-artemis-ss-0 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q "True"; do
+              until kubectl get pods -l resource=ActiveMQ -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q "True"; do
                 echo "ActiveMQ broker not ready yet, waiting..."
                 sleep 5
               done
