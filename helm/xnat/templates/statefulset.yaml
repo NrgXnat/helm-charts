@@ -123,6 +123,21 @@ spec:
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
         {{- end }}
+        {{- if .Values.activemq.broker.enabled }}
+        - name: wait-for-amq
+          image: bitnami/kubectl:latest
+          imagePullPolicy: "IfNotPresent"
+          command:
+            - 'sh'
+            - '-c'
+            - |
+              echo "Waiting for ActiveMQ broker to be ready..."
+              until kubectl get pod activemq-artemis-ss-0 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q "True"; do
+                echo "ActiveMQ broker not ready yet, waiting..."
+                sleep 5
+              done
+              echo "ActiveMQ broker is ready!"
+        {{- end }}
         {{- if .Values.initContainers }}
         {{- with .Values.initContainers }}
         {{- . | toYaml | nindent 8 }}
