@@ -25,7 +25,7 @@ activemq:
     enabled: false
     user: admin
     password: ""
-    port: "62626"
+    port: 62626
   existingSecret:
     name: ""
     key: ""
@@ -240,7 +240,7 @@ postgresql:
   postgresqlUsername: "xnat-web"
   postgresqlPassword: "xnat-web"
   external:
-    postgresqlUri: Null
+    postgresqlUri: null
   persistence:
     enabled: true
     storageClass: default
