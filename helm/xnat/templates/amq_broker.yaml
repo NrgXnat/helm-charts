@@ -5,6 +5,7 @@ metadata:
   name: activemq-artemis
   labels:
     {{- include "xnat.labels" . | nindent 4 }}
+    resource: "ActiveMQ"
 spec:
   acceptors:
     - bindToAllInterfaces: true
