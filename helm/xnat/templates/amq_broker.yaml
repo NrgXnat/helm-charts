@@ -25,6 +25,6 @@ spec:
           name: "{{ .Values.activemq.existingSecret.name }}"
           key: "{{ .Values.activemq.existingSecret.key }}"
 {{- else }}
-      value:  "{{ .Values.activemq.broker.password }}"
+      value: "{{ .Values.activemq.broker.password }}"
 {{- end }}
 {{- end }}
