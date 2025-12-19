@@ -19,7 +19,7 @@ spec:
     - name: "AMQ_USER"
       value: "{{ .Values.activemq.broker.user }}"
     - name: "AMQ_PASSWORD"
-{{- if .Values.activemq.externalSecret.name }}
+{{- if .Values.activemq.existingSecret.name }}
       valueFrom:
         secretKeyRef:
           name: "{{ .Values.activemq.externalSecret.name }}"
