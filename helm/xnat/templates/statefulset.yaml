@@ -4,7 +4,6 @@ metadata:
   name: {{ include "xnat.fullname" . }}
   labels:
     {{- include "xnat.labels" . | nindent 4 }}
-  annotations:
 spec:
   {{- if .Values.nodeName }}
   replicas: 1
@@ -123,14 +122,13 @@ spec:
         {{- end }}
         {{- if .Values.activemq.broker.enabled }}
         - name: wait-for-amq
-          image: bitnami/kubectl:latest
-          imagePullPolicy: "IfNotPresent"
+          image: busybox:1.36
           command:
             - 'sh'
             - '-c'
             - |
               echo "Waiting for ActiveMQ broker to be ready..."
-              until kubectl get pods -l resource=ActiveMQ -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q "True"; do
+              until nc -z activemq-artemis-{{ template "xnat.fullname" . }}-0-svc {{ .Values.activemq.broker.port }}; do
                 echo "ActiveMQ broker not ready yet, waiting..."
                 sleep 5
               done

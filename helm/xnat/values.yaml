@@ -24,7 +24,7 @@ activemq:
   broker:
     enabled: false
     user: admin
-    password: ""
+    password: "admin"
     port: 62626
   existingSecret:
     name: ""
