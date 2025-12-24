@@ -1,0 +1,30 @@
+{{- if .Values.activemq.broker.enabled }}
+apiVersion: broker.amq.io/v1beta1
+kind: ActiveMQArtemis
+metadata:
+  name: activemq-artemis
+  labels:
+    {{- include "xnat.labels" . | nindent 4 }}
+    resource: "ActiveMQ"
+spec:
+  acceptors:
+    - bindToAllInterfaces: true
+      name: xnat
+      port: {{ .Values.activemq.broker.port | int }}
+  deploymentPlan:
+    requireLogin: true
+  env:
+    - name: "DISABLE_SECURITY"
+      value: "false"
+    - name: "AMQ_USER"
+      value: "{{ .Values.activemq.broker.user }}"
+    - name: "AMQ_PASSWORD"
+{{- if .Values.activemq.existingSecret.name }}
+      valueFrom:
+        secretKeyRef:
+          name: "{{ .Values.activemq.existingSecret.name }}"
+          key: "{{ .Values.activemq.existingSecret.key }}"
+{{- else }}
+      value: "{{ .Values.activemq.broker.password }}"
+{{- end }}
+{{- end }}

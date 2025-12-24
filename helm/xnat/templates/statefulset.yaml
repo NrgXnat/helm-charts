@@ -120,6 +120,20 @@ spec:
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
         {{- end }}
+        {{- if .Values.activemq.broker.enabled }}
+        - name: wait-for-amq
+          image: busybox:1.36
+          command:
+            - 'sh'
+            - '-c'
+            - |
+              echo "Waiting for ActiveMQ broker to be ready..."
+              until nc -z activemq-artemis-{{ template "xnat.fullname" . }}-0-svc {{ .Values.activemq.broker.port }}; do
+                echo "ActiveMQ broker not ready yet, waiting..."
+                sleep 5
+              done
+              echo "ActiveMQ broker is ready!"
+        {{- end }}
         {{- if .Values.initContainers }}
         {{- with .Values.initContainers }}
         {{- . | toYaml | nindent 8 }}

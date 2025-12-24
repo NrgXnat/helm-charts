@@ -22,6 +22,9 @@ version: 1.0.1
 # follow Semantic Versioning. They should reflect the version the application is using.
 appVersion: 1.9.2.1
 
+# In addition to the following helm dependencies, this chart relies on the ark-mq operator for ActiveMQ Artemis.
+# Full documentation can be found at https://github.com/arkmq-org/activemq-artemis-operator/blob/main/docs/getting-started/quick-start.md
+
 dependencies:
 - name: postgresql
   version: "16.1.0"
@@ -31,10 +34,6 @@ dependencies:
   version: "17.11.3"
   repository: "https://charts.bitnami.com/bitnami"
   condition: redis.enabled
-- name: activemq-artemis
-  version: "1.0.1"
-  repository: "https://kahootali.github.io/activemq-artemis-helm/"
-  condition: amq.enabled
 - name: mail
   repository: "https://bokysan.github.io/docker-postfix/"
   version: "3.6.1"

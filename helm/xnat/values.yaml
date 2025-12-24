@@ -17,20 +17,18 @@ mail:
       #RELAYHOST_PASSWORD: ${RELAYHOST_PASSWORD}
       MASQUERADED_DOMAINS: "xnat.org"
 
-activemq-artemis:
-  image:
-    repository: kahootali/activemq-artemis-docker
-    pullPolicy: Always
-    tag: "v2.19.0"
-  artemisUser: admin
-  # artemisPassword sets the artemis admin user password
-  artemisPassword: admin
-  env:
-  - name: DISABLE_SECURITY
-    value: "false"  # never set to true in production
-  replicas: 1
-  persistence:
+# In order to use the following activemq section you must install the Ark-MQ broker found at
+# https://github.com/arkmq-org/activemq-artemis-operator/blob/main/docs/getting-started/quick-start.md
+# You must set one of either broker.password or existingSecret
+activemq:
+  broker:
     enabled: false
+    user: admin
+    password: "admin"
+    port: 62626
+  existingSecret:
+    name: ""
+    key: ""
 
 replicaCount: 1
 
@@ -54,10 +52,6 @@ redis:
     replicaCount: 0
     persistence:
       enabled: false
-
-amq:
-  enabled: true
-  pullPolicy: IfNotPresent
 
 serviceAccount:
   # Specifies whether a service account should be created
@@ -245,6 +239,8 @@ postgresql:
   postgresqlDatabase: "xnat-web"
   postgresqlUsername: "xnat-web"
   postgresqlPassword: "xnat-web"
+  external:
+    postgresqlUri: null
   persistence:
     enabled: true
     storageClass: default
