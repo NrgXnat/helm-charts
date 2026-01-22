@@ -13,6 +13,9 @@ spec:
       port: {{ .Values.activemq.broker.port | int }}
   deploymentPlan:
     requireLogin: true
+    {{- with .Values.activemq.broker.deploymentPlan }}
+    {{- . | toYaml | nindent 4 }}
+    {{- end }}
   env:
     - name: "DISABLE_SECURITY"
       value: "false"
