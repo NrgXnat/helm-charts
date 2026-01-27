@@ -27,7 +27,9 @@ activemq:
     password: "admin"
     port: 62626
     # Passed directly to the broker. See the official documentation for arguments that can be placed here.
-    deploymentPlan: {} 
+    deploymentPlan:
+      requireLogin: true
+
   existingSecret:
     name: ""
     key: ""

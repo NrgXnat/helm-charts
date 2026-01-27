@@ -12,7 +12,6 @@ spec:
       name: xnat
       port: {{ .Values.activemq.broker.port | int }}
   deploymentPlan:
-    requireLogin: true
     {{- with .Values.activemq.broker.deploymentPlan }}
     {{- . | toYaml | nindent 4 }}
     {{- end }}
