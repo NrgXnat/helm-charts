@@ -12,21 +12,19 @@ spec:
       name: xnat
       port: {{ .Values.activemq.broker.port | int }}
   deploymentPlan:
-    {{- with .Values.activemq.broker.deploymentPlan }}
-    {{- . | toYaml | nindent 4 }}
-    {{- end }}
+    {{- .Values.activemq.broker.deploymentPlan | toYaml | nindent 4 }}   
   env:
     - name: "DISABLE_SECURITY"
       value: "false"
     - name: "AMQ_USER"
       value: "{{ .Values.activemq.broker.user }}"
     - name: "AMQ_PASSWORD"
-{{- if .Values.activemq.existingSecret.name }}
+    {{- if .Values.activemq.existingSecret.name }}
       valueFrom:
         secretKeyRef:
           name: "{{ .Values.activemq.existingSecret.name }}"
           key: "{{ .Values.activemq.existingSecret.key }}"
-{{- else }}
+    {{- else }}
       value: "{{ .Values.activemq.broker.password }}"
-{{- end }}
+    {{- end }}
 {{- end }}
