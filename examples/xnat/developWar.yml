@@ -1,0 +1,55 @@
+extra_volumes:
+  - name: webapps
+    emptyDir: {}
+
+
+extra_volume_mounts:
+  - name: webapps
+    mountPath: "/usr/local/tomcat/webapps"
+    readOnly: false
+
+initContainers:
+  - name: develop-jar
+    command:
+    - aws
+    - s3
+    - cp
+    - s3://{{ bucket/path }}/xnat.war
+    - /data/xnat/home/webapps/ROOT.war
+    image: amazon/aws-cli
+    imagePullPolicy: IfNotPresent
+    resources: {}
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /data/xnat/home/webapps
+      name: webapps
+  - name: unzip-jar
+    args:
+    - set -x; apk add --no-cache unzip; ls /data/xnat/home/webapps; unzip -o /data/xnat/home/webapps/ROOT.war
+      -d /data/xnat/home/webapps/ROOT; chown -R 53 /data/xnat/home/webapps/ROOT;
+    command:
+    - /bin/sh
+    - -c
+    image: alpine
+    imagePullPolicy: IfNotPresent
+    resources: {}
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /data/xnat/home/webapps
+      name: webapps
+  - name: configure-logging
+    command:
+    - sed
+    - -i
+    - s/ch.qos.logback.core.rolling.RollingFileAppender/ch.qos.logback.core.ConsoleAppender/
+    - /data/xnat/home/webapps/ROOT/WEB-INF/classes/logback.xml
+    image: alpine
+    imagePullPolicy: IfNotPresent
+    resources: {}
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /data/xnat/home/webapps
+      name: webapps
