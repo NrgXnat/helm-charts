@@ -264,7 +264,10 @@ probes:
     failureThreshold: 1
     periodSeconds: 10
     timeoutSeconds: 30
-
+  readiness:
+    failureThreshold: 5
+    periodSeconds: 30
+    timeoutSeconds: 60
 restore: false
 backups:
   backupStorageAccount:
