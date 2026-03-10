@@ -259,12 +259,15 @@ probes:
     # adjust below values to suit the startup time. Below startup time is 15*10=150s
     failureThreshold: 15
     periodSeconds: 10
-    timeoutSeconds: 30
+    timeoutSeconds: 5
   liveness:
-    failureThreshold: 1
-    periodSeconds: 10
+    failureThreshold: 12
+    periodSeconds: 300
+    timeoutSeconds: 60
+  readiness:
+    failureThreshold: 10
+    periodSeconds: 60
     timeoutSeconds: 30
-
 restore: false
 backups:
   backupStorageAccount:
