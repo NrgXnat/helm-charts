@@ -75,7 +75,7 @@ spec:
             failureThreshold: {{ .Values.probes.startup.failureThreshold }}
             periodSeconds: {{ .Values.probes.startup.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds }}
-         resources:
+          resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
             - name: passwd
