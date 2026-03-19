@@ -26,10 +26,10 @@ appVersion: 1.9.2.1
 # Full documentation can be found at https://github.com/arkmq-org/activemq-artemis-operator/blob/main/docs/getting-started/quick-start.md
 
 dependencies:
-- name: postgresql
-  version: "16.1.0"
-  repository: "https://charts.bitnami.com/bitnami"
-  condition: postgresql.enabled
+- name: cloudnative-pg
+  version: "0.27.1"
+  repository: "https://raw.githubusercontent.com/cloudnative-pg/charts/refs/heads/gh-pages/"
+  condition: cnpg.operator.enabled
 - name: redis
   version: "17.11.3"
   repository: "https://charts.bitnami.com/bitnami"
