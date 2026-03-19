@@ -1,5 +1,5 @@
 {{ if not .Values.cnpg.external.postgresqlUri }}
-{{ if not .Values.cnpg.credentials.externalSecret }}
+{{ if not .Values.cnpg.cluster.credentials.externalSecret }}
 ---
 apiVersion: v1
 kind: Secret
@@ -25,11 +25,11 @@ spec:
   enableSuperuserAccess: true
   bootstrap:
     initdb:
-      database: {{ .Values.cnpg.credentials.database }}
-      owner: {{ .Values.cnpg.credentials.username }}
+      database: {{ .Values.cnpg.cluster.credentials.database }}
+      owner: {{ .Values.cnpg.cluster.credentials.username }}
       secret:
-        {{ if .Values.cnpg.credentials.externalSecret }}
-        name: {{ .Values.cnpg.credentials.externalSecret }}
+        {{ if .Values.cnpg.cluster.credentials.externalSecret }}
+        name: {{ .Values.cnpg.cluster.credentials.externalSecret }}
         {{ else }}
         name: {{ printf "%s-app-credentials" (include "xnat.postgresql.clusterName" .) }}
         {{ end }}
