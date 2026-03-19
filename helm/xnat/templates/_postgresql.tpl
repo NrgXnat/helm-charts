@@ -6,23 +6,23 @@ Create the name of the PostgreSQL service account to use
 {{- end -}}
 
 {{- define "xnat.postgresql.postgresqlUri" -}}
-{{- if .Values.cnpg.cluster.external.postgresqlUri }}
-{{- .Values.cnpg.cluster.postgresql.external.postgresqlUri }}
+{{- if .Values.cnpg.external.postgresqlUri }}
+{{- .Values.cnpg.external.postgresqlUri }}
 {{- else }}
 {{- printf "%s-%s" .Release.Name "postgres-rw" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 {{- end -}}
 
 {{- define "xnat.postgresql.postgresqlDatabase" -}}
-{{- .Values.cnpg.cluster.database }}
+{{- .Values.cnpg.cluster.credentials.database }}
 {{- end -}}
 
 {{- define "xnat.postgresql.postgresqlUsername" -}}
-{{- .Values.cnpg.cluster.postgresqlUsername }}
+{{- .Values.cnpg.cluster.credentials.username }}
 {{- end -}}
 
 {{- define "xnat.postgresql.postgresqlPassword" -}}
-{{- .Values.cnpg.cluster.postgresqlPassword }}
+{{- .Values.cnpg.cluster.credentials.password }}
 {{- end -}}
 
 {{- define "xnat.postgresql.clusterName" -}}
