@@ -1,0 +1,34 @@
+{{ if not .Values.cngp.external.postgresqlUri }}
+{{ if not .Values.cnpg.credentials.externalSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ printf "%s-app-credentials" (include "xnat.postgresql.clusterName" .) }}
+type: kubernetes.io/basic-auth
+stringData:
+  username: {{ .Values.cnpg.cluster.credentials.username }}
+  password: {{ .Values.cnpg.cluster.credentials.password }}
+{{ end }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "xnat.postgresql.clusterName" . }}
+spec:
+  instances: {{ .Values.cnpg.cluster.instances }}
+  imageName: ghcr.io/cloudnative-pg/postgresql:{{ .Values.cnpg.cluster.version }}
+  storage:
+    size: {{ .Values.cnpg.cluster.storage.size }}
+    storageClass: {{ .Values.cnpg.cluster.storage.storageClass }}
+  resources: {{ .Values.cnpg.cluster.resources }}
+  enableSuperuserAccess: true
+  bootstrap:
+    initdb:
+      database: {{ .Values.cnpg.cluster.credentials.database }}
+      owner: {{ .Values.cnpg.cluster.credentials.username }}
+      secret:
+        name: {{ printf "%s-app-credentials" (include "xnat.postgresql.clusterName" .) }}
+  postgresql:
+    parameters: {{ .Values.cnpg.cluster.parameters }}
+{{ end }}
