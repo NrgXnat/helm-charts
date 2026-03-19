@@ -13,7 +13,7 @@ spec:
 apiVersion: v1
 kind: EndpointSlice
 metadata:
-  name: {{xnat.postgresql.fullname . }}
+  name: {{ include "xnat.postgresql.fullname" . }}
   labels:
 {{- include "xnat.labels" . | nindent 4 }}
     kubernetes.io/service-name: {{ include "xnat.postgresql.fullname" . }}
