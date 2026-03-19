@@ -239,8 +239,9 @@ cnpg:
     name: "" # Defaults to "{release-name}-postgres"
     instances: 1
     version: 15
-    storage: 50Gi
-    storageClass: ""
+    storage:
+      size: "50Gi"
+      storageClass: ""
   resources:
     requests:
       cpu: 500m

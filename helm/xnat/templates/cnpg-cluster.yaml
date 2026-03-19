@@ -1,4 +1,4 @@
-{{ if not .Values.cngp.external.postgresqlUri }}
+{{ if not .Values.cnpg.external.postgresqlUri }}
 {{ if not .Values.cnpg.credentials.externalSecret }}
 ---
 apiVersion: v1
@@ -25,8 +25,8 @@ spec:
   enableSuperuserAccess: true
   bootstrap:
     initdb:
-      database: {{ .Values.cnpg.cluster.credentials.database }}
-      owner: {{ .Values.cnpg.cluster.credentials.username }}
+      database: {{ .Values.cnpg.credentials.database }}
+      owner: {{ .Values.cnpg.credentials.username }}
       secret:
         {{ if .Values.cnpg.credentials.externalSecret }}
         name: {{ .Values.cnpg.credentials.externalSecret }}
