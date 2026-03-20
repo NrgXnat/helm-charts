@@ -231,13 +231,7 @@ dicom_scp:
       # nodePort: 32514
       # loadBalancerIp: "130.95.27.91"
 
-# Values passed to the cloudnative-pg operator subchart when cnpg.operator.enabled is true.
-# See https://github.com/cloudnative-pg/charts/tree/main/charts/cloudnative-pg for all options.
-cloudnative-pg: {}
-
 cnpg:
-  operator:
-    enabled: false # Set true only if operator is not pre-installed
   cluster:
     enabled: true # Set to false to use your own DB
     name: "" # Defaults to "{release-name}-postgres"
