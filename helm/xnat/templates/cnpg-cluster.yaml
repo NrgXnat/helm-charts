@@ -15,13 +15,15 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: {{ include "xnat.postgresql.clusterName" . }}
+  annotations:
+    checksum/cnpg-values: {{ .Values.cnpg | toJson | sha256sum }}
 spec:
   instances: {{ .Values.cnpg.cluster.instances }}
   imageName: ghcr.io/cloudnative-pg/postgresql:{{ .Values.cnpg.cluster.version }}
   storage:
     size: {{ .Values.cnpg.cluster.storage.size }}
     storageClass: {{ .Values.cnpg.cluster.storage.storageClass }}
-  resources: {{ .Values.cnpg.cluster.resources }}
+  resources: {{- .Values.cnpg.cluster.resources | toYaml | nindent 4 }}
   enableSuperuserAccess: true
   bootstrap:
     initdb:
@@ -34,5 +36,6 @@ spec:
         name: {{ printf "%s-app-credentials" (include "xnat.postgresql.clusterName" .) }}
         {{ end }}
   postgresql:
-    parameters: {{ .Values.cnpg.cluster.parameters }}
+    parameters: {{- .Values.cnpg.cluster.parameters | toYaml | nindent 6 }}
+  managed: {{- .Values.cnpg.cluster.managed | toYaml | nindent 4 }}
 {{ end }}
