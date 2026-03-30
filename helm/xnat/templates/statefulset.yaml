@@ -139,6 +139,18 @@ spec:
               done
               echo "ActiveMQ broker is ready!"
         {{- end }}
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - 'sh'
+            - '-c'
+            - |
+              echo "Waiting for Postgres to be ready"
+              until nc -z {{ template "xnat.postgresql.postgresqlUri" }}:{{ template "xnat.postgresql.postgresqlPort" }}; do
+                echo "Postgres not ready yet, waiting..."
+                sleep 5
+              done
+              echo "Postgres is ready!"
         {{- if .Values.initContainers }}
         {{- with .Values.initContainers }}
         {{- . | toYaml | nindent 8 }}

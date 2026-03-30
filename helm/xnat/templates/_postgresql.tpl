@@ -13,6 +13,13 @@ Create the name of the PostgreSQL service account to use
 {{- end }}
 {{- end -}}
 
+{{- define "xnat.postgresql.postgresqlPort" -}}
+{{- if .Values.cnpg.external.postgresqlPort }}
+{{- .Values.cnpg.external.postgresqlPort }}
+{{- else }}
+"5432"
+{{- end }}
+{{- end -}}
 {{- define "xnat.postgresql.postgresqlDatabase" -}}
 {{- .Values.cnpg.cluster.credentials.database }}
 {{- end -}}
