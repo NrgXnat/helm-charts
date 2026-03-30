@@ -18,6 +18,7 @@ metadata:
   annotations:
     checksum/cnpg-values: {{ .Values.cnpg | toJson | sha256sum }}
 spec:
+  affinity: {{ .Valuse.cnpg.cluster.affinity | toYaml | nindent 4 }}
   instances: {{ .Values.cnpg.cluster.instances }}
   imageName: ghcr.io/cloudnative-pg/postgresql:{{ .Values.cnpg.cluster.version }}
   storage:

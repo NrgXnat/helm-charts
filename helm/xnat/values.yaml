@@ -233,6 +233,7 @@ dicom_scp:
 
 cnpg:
   cluster:
+    affinity: {}
     enabled: true # Set to false to use your own DB
     name: "" # Defaults to "{release-name}-postgres"
     instances: 1
@@ -247,6 +248,8 @@ cnpg:
       limits:
         cpu: 16
         memory: "32Gi"
+    tolerations: {}
+    nodeSelector: {}
     parameters:
       max_connections: "100"
       shared_buffers: "256MB"
