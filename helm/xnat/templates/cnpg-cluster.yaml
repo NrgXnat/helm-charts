@@ -1,4 +1,4 @@
-{{ if not .Values.cnpg.external.postgresqlUri }}
+{{ if .Values.cnpg.enabled }}
 {{ if not .Values.cnpg.cluster.credentials.externalSecret }}
 ---
 apiVersion: v1

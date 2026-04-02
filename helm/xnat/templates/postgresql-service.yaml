@@ -1,4 +1,4 @@
-{{ if .Values.cnpg.external.postgresqlUri }}
+{{ if .Values.cnpg.enabled }}
 ---
 apiVersion: v1
 kind: Service
