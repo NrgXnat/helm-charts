@@ -1,5 +1,5 @@
-{{ if .Values.cnpg.cluster.enabled }}
-{{ if not .Values.cnpg.cluster.credentials.externalSecret }}
+{{- if .Values.cnpg.cluster.enabled }}
+{{- if not .Values.cnpg.cluster.credentials.externalSecret }}
 ---
 apiVersion: v1
 kind: Secret
@@ -9,7 +9,7 @@ type: kubernetes.io/basic-auth
 stringData:
   username: {{ .Values.cnpg.cluster.credentials.username }}
   password: {{ .Values.cnpg.cluster.credentials.password }}
-{{ end }}
+{{- end }}
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
@@ -25,7 +25,7 @@ spec:
     size: {{ .Values.cnpg.cluster.storage.size }}
     storageClass: {{ .Values.cnpg.cluster.storage.storageClass }}
   resources: {{- .Values.cnpg.cluster.resources | toYaml | nindent 4 }}
-  enableSuperuserAccess: true
+  enableSuperuserAccess: {{ .Values.cnpg.cluster.enableSuperuserAccess }}
   bootstrap:
     initdb:
       database: {{ .Values.cnpg.cluster.credentials.database }}
@@ -39,4 +39,4 @@ spec:
   postgresql:
     parameters: {{- .Values.cnpg.cluster.parameters | toYaml | nindent 6 }}
   managed: {{- .Values.cnpg.cluster.managed | toYaml | nindent 4 }}
-{{ end }}
+{{- end }}
