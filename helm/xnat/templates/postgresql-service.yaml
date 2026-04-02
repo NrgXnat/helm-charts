@@ -1,5 +1,5 @@
-{{ if not .Values.cnpg.cluster.enabled }}
-{{ if .Values.cnpg.external.postgresqlUri }}
+{{- if not .Values.cnpg.cluster.enabled }}
+{{- if .Values.cnpg.external.postgresqlUri }}
 ---
 apiVersion: v1
 kind: Service
@@ -10,8 +10,7 @@ metadata:
 spec:
   type: ExternalName
   externalName: {{ .Values.cnpg.external.postgresqlUri }}
-{{- end }}
-{{ if .Values.cnpg.external.postgresqlIp }}
+{{- else if .Values.cnpg.external.postgresqlIp }}
 ---
 apiVersion: v1
 kind: Service

@@ -271,7 +271,7 @@ cnpg:
     # Set only one of PostgresqlUri or postgresqlIp
     postgresqlUri: null
     postgresqlIp: null
-    postgresqlPort: 5432
+    postgresqlPort: null
 
 probes:
   startup:

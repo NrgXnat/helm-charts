@@ -18,7 +18,9 @@ metadata:
   annotations:
     checksum/cnpg-values: {{ .Values.cnpg | toJson | sha256sum }}
 spec:
+  {{- if .Values.cnpg.cluster.affinity }}
   affinity: {{ .Values.cnpg.cluster.affinity | toYaml | nindent 4 }}
+  {{- end }}
   instances: {{ .Values.cnpg.cluster.instances }}
   imageName: ghcr.io/cloudnative-pg/postgresql:{{ .Values.cnpg.cluster.version }}
   storage:
@@ -31,12 +33,14 @@ spec:
       database: {{ .Values.cnpg.cluster.credentials.database }}
       owner: {{ .Values.cnpg.cluster.credentials.username }}
       secret:
-        {{ if .Values.cnpg.cluster.credentials.externalSecret }}
+        {{- if .Values.cnpg.cluster.credentials.externalSecret }}
         name: {{ .Values.cnpg.cluster.credentials.externalSecret }}
-        {{ else }}
+        {{- else }}
         name: {{ printf "%s-app-credentials" (include "xnat.postgresql.clusterName" .) }}
-        {{ end }}
+        {{- end }}
   postgresql:
     parameters: {{- .Values.cnpg.cluster.parameters | toYaml | nindent 6 }}
+  {{- if .Values.cnpg.cluster.managed }}
   managed: {{- .Values.cnpg.cluster.managed | toYaml | nindent 4 }}
+  {{- end }}
 {{- end }}
