@@ -1,4 +1,5 @@
 {{ if not .Values.cnpg.cluster.enabled }}
+{{ if .Values.cnpg.external.postgresqlUri }}
 ---
 apiVersion: v1
 kind: Service
@@ -9,6 +10,22 @@ metadata:
 spec:
   type: ExternalName
   externalName: {{ .Values.cnpg.external.postgresqlUri }}
+{{- end }}
+{{ if .Values.cnpg.external.postgresqlIp }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "xnat.postgresql.fullname" . }}
+  labels:
+{{- include "xnat.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ include "xnat.postgresql.postgresqlPort" . }}
+      targetPort: {{ include "xnat.postgresql.postgresqlPort" . }}
+      protocol: TCP
+      name: postgresql
 ---
 apiVersion: v1
 kind: EndpointSlice
@@ -20,5 +37,9 @@ metadata:
 addressType: IPv4
 endpoints:
   - addresses:
-      - "{{ .Values.cnpg.external.postgresqlUri }}"
+      - "{{ .Values.cnpg.external.postgresqlIp }}"
+ports:
+  - port: {{ include "xnat.postgresql.postgresqlPort" . }}
+    protocol: TCP
+{{- end }}
 {{- end }}
