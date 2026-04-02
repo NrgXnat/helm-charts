@@ -1,4 +1,4 @@
-{{ if .Values.cnpg.cluster.enabled }}
+{{ if not .Values.cnpg.cluster.enabled }}
 ---
 apiVersion: v1
 kind: Service
