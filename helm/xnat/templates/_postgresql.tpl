@@ -20,6 +20,7 @@ Create the name of the PostgreSQL service account to use
 "5432"
 {{- end }}
 {{- end -}}
+
 {{- define "xnat.postgresql.postgresqlDatabase" -}}
 {{- .Values.cnpg.cluster.credentials.database }}
 {{- end -}}
