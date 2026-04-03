@@ -1,4 +1,5 @@
 {{- if .Values.activemq.broker.enabled }}
+---
 apiVersion: broker.amq.io/v1beta1
 kind: ActiveMQArtemis
 metadata:
