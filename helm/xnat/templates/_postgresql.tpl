@@ -2,37 +2,41 @@
 Create the name of the PostgreSQL service account to use
 */}}
 {{- define "xnat.postgresql.fullname" -}}
-{{- printf "%s-%s" .Release.Name "postgresql" | trunc 63 | trimSuffix "-" -}}
+{{- printf "%s-%s" .Release.Name "postgres-rw" | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "xnat.postgresql.postgresqlUri" -}}
-{{- if .Values.postgresql.external.postgresqlUri }}
-{{- .Values.postgresql.external.postgresqlUri }}
+{{- if .Values.cnpg.external.postgresqlUri }}
+{{- .Values.cnpg.external.postgresqlUri }}
 {{- else }}
-{{- printf "%s-%s" .Release.Name "postgresql" | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-%s" .Release.Name "postgres-rw" | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end -}}
+
+{{- define "xnat.postgresql.postgresqlPort" -}}
+{{- if .Values.cnpg.external.postgresqlPort }}
+{{- .Values.cnpg.external.postgresqlPort }}
+{{- else }}
+"5432"
 {{- end }}
 {{- end -}}
 
 {{- define "xnat.postgresql.postgresqlDatabase" -}}
-{{- if .Values.global.postgresql.postgresqlDatabase }}
-{{- .Values.global.postgresql.postgresqlDatabase }}
-{{- else }}
-{{- .Values.postgresql.postgresqlDatabase }}
-{{- end }}
+{{- .Values.cnpg.cluster.credentials.database }}
 {{- end -}}
 
 {{- define "xnat.postgresql.postgresqlUsername" -}}
-{{- if .Values.global.postgresql.postgresqlUsername }}
-{{- .Values.global.postgresql.postgresqlUsername }}
-{{- else }}
-{{- .Values.postgresql.postgresqlUsername }}
-{{- end }}
+{{- .Values.cnpg.cluster.credentials.username }}
 {{- end -}}
 
 {{- define "xnat.postgresql.postgresqlPassword" -}}
-{{- if .Values.global.postgresql.postgresqlPassword }}
-{{- .Values.global.postgresql.postgresqlPassword }}
+{{- .Values.cnpg.cluster.credentials.password }}
+{{- end -}}
+
+{{- define "xnat.postgresql.clusterName" -}}
+{{- if .Values.cnpg.cluster.name }}
+{{- .Values.cnpg.cluster.name }}
 {{- else }}
-{{- .Values.postgresql.postgresqlPassword }}
+{{- printf "%s-%s" .Release.Name "postgres" }}
 {{- end }}
 {{- end -}}
