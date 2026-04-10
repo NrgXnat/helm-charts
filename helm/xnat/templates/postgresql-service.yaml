@@ -1,35 +1,44 @@
-{{- if not .Values.postgresql.enabled }}
-{{- else }}
+{{- if not .Values.cnpg.cluster.enabled }}
+{{- if .Values.cnpg.external.postgresqlUri }}
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "xnat.fullname" . }}-postgresql
+  name: {{ include "xnat.postgresql.fullname" . }}
   labels:
-    {{- include "xnat.labels" . | nindent 4 }}
+{{- include "xnat.labels" . | nindent 4 }}
 spec:
-{{- if .Values.postgresqlExternalName }}
   type: ExternalName
-  externalName: {{ .Values.postgresqlExternalName }}
-{{- else }}
+  externalName: {{ .Values.cnpg.external.postgresqlUri }}
+{{- else if .Values.cnpg.external.postgresqlIp }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "xnat.postgresql.fullname" . }}
+  labels:
+{{- include "xnat.labels" . | nindent 4 }}
+spec:
   type: ClusterIP
   ports:
-    - port: 5432
-      targetPort: 5432
+    - port: {{ include "xnat.postgresql.postgresqlPort" . }}
+      targetPort: {{ include "xnat.postgresql.postgresqlPort" . }}
       protocol: TCP
       name: postgresql
 ---
 apiVersion: v1
-kind: Endpoints
+kind: EndpointSlice
 metadata:
-  name: {{ include "xnat.fullname" . }}-postgresql
+  name: {{ include "xnat.postgresql.fullname" . }}
   labels:
-    {{- include "xnat.labels" . | nindent 4 }}
-subsets:
+{{- include "xnat.labels" . | nindent 4 }}
+    kubernetes.io/service-name: {{ include "xnat.postgresql.fullname" . }}
+addressType: IPv4
+endpoints:
   - addresses:
-      {{- range .Values.postgresqlExternalIPs }}
-      - ip: {{ . | quote }}
-      {{- end }}
-    ports:
-      - port: 5432
+      - "{{ .Values.cnpg.external.postgresqlIp }}"
+ports:
+  - port: {{ include "xnat.postgresql.postgresqlPort" . }}
+    protocol: TCP
 {{- end }}
 {{- end }}
