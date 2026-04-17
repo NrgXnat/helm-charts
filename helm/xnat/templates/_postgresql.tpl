@@ -17,7 +17,7 @@ Create the name of the PostgreSQL service account to use
 {{- if .Values.cnpg.external.postgresqlPort }}
 {{- .Values.cnpg.external.postgresqlPort }}
 {{- else }}
-"5432"
+{{- printf "5432"}}
 {{- end }}
 {{- end -}}
 
