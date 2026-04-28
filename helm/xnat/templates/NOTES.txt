@@ -2,7 +2,7 @@
 {{- if .Values.ingress.enabled }}
 {{- $context := . }}
 {{- range .Values.ingress.hosts }}
-  http{{ if $context.Values.ingress.tls }}s{{ end }}://{{ . }}/
+  http{{ if $context.Values.ingress.tls }}s{{ end }}://{{ .host }}/
 {{- end }}
 {{- else if contains "NodePort" .Values.service.type }}
   export NODE_PORT=$(kubectl get --namespace {{ $.Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "xnat.fullname" . }})
