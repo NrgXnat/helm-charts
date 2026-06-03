@@ -27,7 +27,8 @@ activemq:
   existingSecret:
     name: ""
     key: ""
-
+  external:
+    MQHostName: ""
 replicaCount: 1
 
 image:
