@@ -1,0 +1,28 @@
+{{/*
+PodDisruptionBudget for the XNAT StatefulSet.
+
+Rendered ONLY when podDisruptionBudget.enabled AND the workload can actually
+run more than one pod (replicaCount >= 2, or autoscaling is on). A PDB on a
+single-replica workload using minAvailable: 1 permanently blocks voluntary
+node drains (cluster-autoscaler / EKS Auto consolidation can never evict the
+only pod), so we never emit one in that case. maxUnavailable semantics are the
+drain-safe default; only set minAvailable for genuine HA and never >= the
+replica count.
+*/}}
+{{- if and .Values.podDisruptionBudget.enabled (or (ge (int .Values.replicaCount) 2) .Values.autoscaling.enabled) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "xnat.fullname" . }}
+  labels:
+    {{- include "xnat.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable | default 1 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "xnat.selectorLabels" . | nindent 6 }}
+{{- end }}

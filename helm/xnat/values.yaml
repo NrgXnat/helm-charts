@@ -64,15 +64,29 @@ serviceAccount:
 
 podAnnotations: {}
 
-podSecurityContext: {}
-  # fsGroup: 2000
+# fsGroup makes the kubelet chown mounted volumes to this GID so the non-root
+# tomcat user (1000) can write to dynamically provisioned PVCs; OnRootMismatch
+# skips the recursive walk once the top-level GID already matches. Without it,
+# gp3/EFS volumes mount root:root and XNAT can't create its prearchive lock
+# tree, so DICOM imports fail with a misleading "unable to read DICOM object".
+podSecurityContext:
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
 
+# Applied to the main xnat (Tomcat) container. XNAT needs no Linux
+# capabilities, so drop them all. readOnlyRootFilesystem is intentionally left
+# off: XNAT writes under /usr/local/tomcat and /data/xnat at runtime.
 securityContext:
   runAsNonRoot: true
   runAsUser: 1000
-  # capabilities:
-  #   drop:
-  #   - ALL
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
   # readOnlyRootFilesystem: true
 
 service:
@@ -111,17 +125,19 @@ ingress:
 
 hostAliases: null
 
-resources: {}
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+# XNAT is a memory-hungry Tomcat app. These requests give the pod a Burstable
+# QoS instead of the previous empty {} (BestEffort, first to be evicted under
+# node pressure and which makes the memory-based HPA below a no-op). The legacy
+# Ansible deploy requested cpu 4 / memory 16Gi with no limit; match or raise
+# that for production by overriding here. If you set a memory *limit*, also set
+# jvm.maxHeap below it (see the jvm block) so the JVM isn't OOMKilled.
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
   # limits:
-  #   cpu: 100m
-  #   memory: 128Mi
-  # requests:
-  #   cpu: 100m
-  #   memory: 128Mi
+  #   cpu: "4"
+  #   memory: 16Gi
 
 autoscaling:
   enabled: false
@@ -129,6 +145,38 @@ autoscaling:
   maxReplicas: 100
   targetCPUUtilizationPercentage: 80
   targetMemoryUtilizationPercentage: 80
+
+# PodDisruptionBudget for the XNAT StatefulSet. Off by default and, even when
+# enabled, only rendered when the workload can run >= 2 pods (replicaCount >= 2
+# or autoscaling on) so a single-replica install never blocks node drains.
+# Prefer maxUnavailable; set minAvailable only for real HA and never >= the
+# replica count (it would deadlock voluntary evictions / node consolidation).
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+  minAvailable: ""
+
+# Heap/metaspace sizing injected via JAVA_TOOL_OPTIONS. Off by default, leaving
+# the image's built-in JVM ergonomics in place (parity with the legacy Ansible
+# deploy, which set no heap). Turn on and set maxHeap when you pin a memory
+# limit under `resources`, keeping maxHeap below the limit with headroom for
+# metaspace, threads and direct buffers.
+jvm:
+  enabled: false
+  minHeap: ""        # -Xms, e.g. "8g"
+  maxHeap: ""        # -Xmx, e.g. "12g"
+  maxMetaspace: ""   # -XX:MaxMetaspaceSize, e.g. "1g" (plugin-heavy XNAT needs room)
+  extraOpts: ""      # appended verbatim to JAVA_TOOL_OPTIONS
+
+# Graceful shutdown. The preStop sleep lets the load balancer deregister the
+# pod before Tomcat receives SIGTERM, so in-flight requests aren't dropped on
+# rollout or node drain; terminationGracePeriodSeconds must exceed the sleep.
+# Set lifecycle: {} to disable the hook.
+terminationGracePeriodSeconds: 90
+lifecycle:
+  preStop:
+    exec:
+      command: ["sh", "-c", "sleep 20"]
 
 nodeSelector: {}
 
@@ -273,20 +321,23 @@ cnpg:
     postgresqlIp: null
     postgresqlPort: null
 
+# TCP-socket probes against the http (8080) port; see statefulset.yaml for why
+# a socket check rather than an HTTP GET on a version-specific health path.
 probes:
   startup:
-    # adjust below values to suit the startup time. Below startup time is 15*10=150s
-    failureThreshold: 15
+    # XNAT boots slowly (plugin scan + Hibernate schema migration). 60 * 10s =
+    # 10 min of grace before liveness can fire; raise for plugin-heavy sites.
+    failureThreshold: 60
     periodSeconds: 10
     timeoutSeconds: 5
   liveness:
     failureThreshold: 12
-    periodSeconds: 300
-    timeoutSeconds: 60
+    periodSeconds: 60
+    timeoutSeconds: 10
   readiness:
     failureThreshold: 10
-    periodSeconds: 60
-    timeoutSeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 10
 restore: false
 backups:
   backupStorageAccount:

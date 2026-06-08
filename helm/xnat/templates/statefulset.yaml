@@ -37,6 +37,7 @@ spec:
       {{- end }}
       {{- end }}
       serviceAccountName: {{ include "xnat.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       {{- if .Values.nodeName }}
@@ -50,33 +51,48 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
+          {{- if .Values.jvm.enabled }}
+          env:
+            # JAVA_TOOL_OPTIONS is honoured by every JVM regardless of the
+            # image's launcher, so heap sizing works without knowing whether
+            # xnat-web reads JAVA_OPTS or CATALINA_OPTS. Note: the JVM logs a
+            # one-line "Picked up JAVA_TOOL_OPTIONS:" notice to stderr.
+            - name: JAVA_TOOL_OPTIONS
+              value: {{ include "xnat.jvmOpts" . | trim | quote }}
+          {{- end }}
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
+          # Probes use a TCP socket on the http port rather than an HTTP GET:
+          # XNAT's health path varies by version and the old default
+          # (/app/template/Login.vm#!) 404s on current xnat-web, while the #!
+          # fragment is never sent server-side. "Is Tomcat accepting on 8080?"
+          # is the version-agnostic readiness signal.
           livenessProbe:
-            httpGet:
-              path: /app/template/Login.vm#!
+            tcpSocket:
               port: http
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
           readinessProbe:
-            httpGet:
-              path: /app/template/Login.vm#!
+            tcpSocket:
               port: http
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
           startupProbe:
-            httpGet:
-              path: /app/template/Login.vm#!
+            tcpSocket:
               port: http
             failureThreshold: {{ .Values.probes.startup.failureThreshold }}
             periodSeconds: {{ .Values.probes.startup.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.lifecycle }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           volumeMounts:
             - name: passwd
               mountPath: /etc/passwd
@@ -171,6 +187,11 @@ spec:
               # Setup xnat-conf.properties
               readarray -d - -t REP <<< "${POD_NAME}"
               cp /tmp/xnat-conf.properties ${XNAT_HOME}/config/xnat-conf.properties
+              # Guarantee a trailing newline before appending: without it the
+              # echo below glues xnat.is_primary_node onto the last property of
+              # the source file (e.g. "...=truexnat.is_primary_node=true"),
+              # which Spring then fails to parse and the webapp never deploys.
+              [ "$(tail -c 1 ${XNAT_HOME}/config/xnat-conf.properties)" = "" ] || echo "" >> ${XNAT_HOME}/config/xnat-conf.properties
               if [[ "${REP[-1]}" -eq "0" ]]; then
                 echo "xnat.is_primary_node=true" >> ${XNAT_HOME}/config/xnat-conf.properties
               else

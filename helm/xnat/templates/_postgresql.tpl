@@ -21,6 +21,18 @@ Create the name of the PostgreSQL service account to use
 {{- end -}}
 {{- end -}}
 
+{{/*
+Service `ports` entry for the external-postgres Service, shared by both the
+ExternalName and the ClusterIP branches in postgresql-service.yaml so the port
+name/protocol stay in lockstep.
+*/}}
+{{- define "xnat.postgresql.servicePorts" -}}
+- port: {{ include "xnat.postgresql.postgresqlPort" . }}
+  targetPort: {{ include "xnat.postgresql.postgresqlPort" . }}
+  protocol: TCP
+  name: postgresql
+{{- end -}}
+
 {{- define "xnat.postgresql.postgresqlDatabase" -}}
 {{- .Values.cnpg.cluster.credentials.database }}
 {{- end -}}

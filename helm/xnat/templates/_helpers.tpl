@@ -78,3 +78,18 @@ Create the name of the service account to use
 {{- printf "xnat.local" -}}
 {{- end }}
 {{- end -}}
+
+{{/*
+Build the JAVA_TOOL_OPTIONS string from .Values.jvm. Only emitted when
+jvm.enabled is true (see statefulset.yaml). Each flag is included only if the
+corresponding value is set, so an operator can tune heap, metaspace, or pass
+arbitrary extra options independently. Keep the container memory limit above
+maxHeap + metaspace + thread/direct-buffer headroom or the JVM is OOMKilled
+before it can GC.
+*/}}
+{{- define "xnat.jvmOpts" -}}
+{{- with .Values.jvm.minHeap }}-Xms{{ . }} {{ end -}}
+{{- with .Values.jvm.maxHeap }}-Xmx{{ . }} {{ end -}}
+{{- with .Values.jvm.maxMetaspace }}-XX:MaxMetaspaceSize={{ . }} {{ end -}}
+{{- with .Values.jvm.extraOpts }}{{ . }}{{ end -}}
+{{- end -}}
