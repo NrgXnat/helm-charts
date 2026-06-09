@@ -21,9 +21,9 @@ jobs:
   helm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v4.3.1
 
       - name: helm lint
         run: |
@@ -53,7 +53,7 @@ jobs:
   actionlint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.1
 
       - name: Run actionlint
         # ubuntu-latest ships shellcheck; cap it at error severity so workflow
