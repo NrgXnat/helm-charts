@@ -1,0 +1,66 @@
+name: chart-lint
+
+# Lint the chart(s) and validate the rendered manifests against several
+# Kubernetes minor versions, plus lint the workflow files themselves. Runs on
+# PRs (and pushes to main) touching charts or workflows. No cluster required.
+on:
+  pull_request:
+    paths:
+      - 'helm/**'
+      - '.github/workflows/**'
+  push:
+    branches: [main]
+    paths:
+      - 'helm/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: helm lint
+        run: |
+          set -euo pipefail
+          for chart in helm/*/; do
+            [ -f "${chart}Chart.yaml" ] || continue
+            helm lint "${chart}"
+          done
+
+      - name: Install kubeconform
+        run: |
+          curl -sSfL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+
+      - name: helm template + kubeconform across Kubernetes minors
+        run: |
+          set -euo pipefail
+          for chart in helm/*/; do
+            [ -f "${chart}Chart.yaml" ] || continue
+            for v in 1.27.0 1.29.0 1.31.0 1.33.0; do
+              echo "== $(basename "${chart}") against Kubernetes ${v} =="
+              helm template ci "${chart}" \
+                | kubeconform -summary -ignore-missing-schemas -kubernetes-version "${v}"
+            done
+          done
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run actionlint
+        # ubuntu-latest ships shellcheck; cap it at error severity so workflow
+        # run-scripts are checked for real bugs without failing on style nits.
+        env:
+          SHELLCHECK_OPTS: --severity=error
+        run: |
+          curl -sSfL https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin actionlint
+          actionlint -color

@@ -62,8 +62,8 @@ jobs:
             cur=$(read_field "${chart}Chart.yaml" version)
             last_tag=$(git tag --list "${name}-*" --sort=-v:refname | head -n1)
             range="${last_tag:+${last_tag}..}HEAD"
-            subjects=$(git log ${range} --pretty=%s -- "${chart}")
-            bodies=$(git log ${range} --pretty=%B -- "${chart}")
+            subjects=$(git log "${range}" --pretty=%s -- "${chart}")
+            bodies=$(git log "${range}" --pretty=%B -- "${chart}")
             [ -n "${subjects}" ] || { echo "${name}: no new commits since ${last_tag:-repo start}"; continue; }
 
             # Bump only if it hasn't already happened: if the version already
