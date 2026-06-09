@@ -54,13 +54,13 @@ jobs:
       - name: Auto-bump changed chart versions
         run: |
           set -euo pipefail
-          read_field() { awk -F': *' "/^$2:/{print \$2; exit}" "$1" | tr -d '"' | tr -d '[:space:]'; }
+          read_field() { awk -F': *' "/^[[:space:]]*$2[[:space:]]*:/{print \$2; exit}" "$1" | tr -d '"' | tr -d '[:space:]'; }
           tags=()
           for chart in helm/*/; do
             [ -f "${chart}Chart.yaml" ] || continue
             name=$(read_field "${chart}Chart.yaml" name)
             cur=$(read_field "${chart}Chart.yaml" version)
-            last_tag=$(git tag --list "${name}-*" --sort=-v:refname | head -n1)
+            last_tag=$(git tag --list "${name}-*" --sort=-v:refname | grep -E "^${name}-[0-9]+\.[0-9]+\.[0-9]+$" | head -n1 || true)
             range="${last_tag:+${last_tag}..}HEAD"
             subjects=$(git log "${range}" --pretty=%s -- "${chart}")
             bodies=$(git log "${range}" --pretty=%B -- "${chart}")
@@ -71,7 +71,7 @@ jobs:
             # play — keep it as-is instead of bumping again.
             tagged_ver=""
             if [ -n "${last_tag}" ]; then
-              tagged_ver=$(git show "${last_tag}:${chart}Chart.yaml" 2>/dev/null | awk -F': *' '/^version:/{print $2; exit}' | tr -d '"' | tr -d '[:space:]' || true)
+              tagged_ver=$(git show "${last_tag}:${chart}Chart.yaml" 2>/dev/null | awk -F': *' '/^[[:space:]]*version[[:space:]]*:/{print $2; exit}' | tr -d '"' | tr -d '[:space:]' || true)
             fi
             if [ -n "${tagged_ver}" ] && [ "${cur}" != "${tagged_ver}" ]; then
               new="${cur}"
@@ -83,7 +83,17 @@ jobs:
               elif printf '%s\n' "${subjects}" | grep -qiE '^feat(\([^)]+\))?:'; then
                 level=minor
               fi
-              IFS=. read -r MA MI PA <<< "${cur}"
+              # Normalise to X.Y.Z before arithmetic: drop any -prerelease /
+              # +build suffix and default missing minor/patch, then require
+              # numeric parts so a malformed version fails loudly instead of
+              # tagging and publishing a garbage version.
+              base="${cur%%-*}"; base="${base%%+*}"
+              IFS=. read -r MA MI PA <<< "${base}"
+              MI="${MI:-0}"; PA="${PA:-0}"
+              if ! printf '%s' "${MA}.${MI}.${PA}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+                echo "ERROR: ${name} version '${cur}' is not a normalisable X.Y.Z semver" >&2
+                exit 1
+              fi
               case "${level}" in
                 major) MA=$((MA + 1)); MI=0; PA=0 ;;
                 minor) MI=$((MI + 1)); PA=0 ;;
@@ -99,7 +109,7 @@ jobs:
               continue
             fi
             if [ "${new}" != "${cur}" ]; then
-              sed -i -E "s/^version:.*/version: ${new}/" "${chart}Chart.yaml"
+              sed -i -E "s/^[[:space:]]*version[[:space:]]*:.*/version: ${new}/" "${chart}Chart.yaml"
               git add "${chart}Chart.yaml"
             fi
             tags+=("${name}-${new}")
@@ -127,7 +137,7 @@ jobs:
       - name: Package and push charts
         run: |
           set -euo pipefail
-          read_field() { awk -F': *' "/^$2:/{print \$2; exit}" "$1" | tr -d '"' | tr -d '[:space:]'; }
+          read_field() { awk -F': *' "/^[[:space:]]*$2[[:space:]]*:/{print \$2; exit}" "$1" | tr -d '"' | tr -d '[:space:]'; }
           owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           registry="oci://ghcr.io/${owner}/charts"
           mkdir -p dist
