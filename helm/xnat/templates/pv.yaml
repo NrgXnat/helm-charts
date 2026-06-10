@@ -16,7 +16,8 @@ spec:
   accessModes: [ {{ $c.accessMode | quote }} ]
   persistentVolumeReclaimPolicy: Retain
   storageClassName: ""
-  mountOptions: {{ $context.Values.nfs.mountOptions }}
+  mountOptions:
+    {{- toYaml $context.Values.nfs.mountOptions | nindent 4 }}
   nfs:
     server: {{ $context.Values.nfs.server }}
     path: "{{ $context.Values.nfs.pathPrefix }}/{{ $name }}"
@@ -25,7 +26,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: {{ include "xnat.fullname" $context | nindent 4 }}-{{ $name }}
+  name: {{ include "xnat.fullname" $context }}-{{ $name }}
   labels:
     {{- include "xnat.labels" $context | nindent 4 }}
 spec:

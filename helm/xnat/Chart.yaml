@@ -1,6 +1,15 @@
 apiVersion: v2
 name: xnat
 description: XNAT imaging informatics platform
+home: https://www.xnat.org
+sources:
+  - https://github.com/NrgXnat/helm-charts
+maintainers:
+  - name: NrgXnat
+    url: https://github.com/NrgXnat
+# Fail fast on clusters older than the APIs this chart relies on
+# (policy/v1 PodDisruptionBudget, autoscaling/v2 HPA, EndpointSlice).
+kubeVersion: ">=1.27.0-0"
 
 # A chart can be either an 'application' or a 'library' chart.
 #
@@ -15,7 +24,7 @@ type: application
 # This is the chart version. This version number should be incremented each time you make changes
 # to the chart and its templates, including the app version.
 # Versions are expected to follow Semantic Versioning (https://semver.org/)
-version: 1.0.2
+version: 1.1.0
 
 # This is the version number of the application being deployed. This version number should be
 # incremented each time you make changes to the application. Versions are not expected to

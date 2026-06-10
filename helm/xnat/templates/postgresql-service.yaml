@@ -10,6 +10,11 @@ metadata:
 spec:
   type: ExternalName
   externalName: {{ .Values.cnpg.external.postgresqlUri }}
+  # An ExternalName Service with no ports is silently dropped by the API
+  # server (the apply succeeds but the object is never created), so XNAT's
+  # JDBC lookup of <release>-postgres-rw fails. Emit the port explicitly.
+  ports:
+    {{- include "xnat.postgresql.servicePorts" . | nindent 4 }}
 {{- else if .Values.cnpg.external.postgresqlIp }}
 ---
 apiVersion: v1
@@ -21,10 +26,7 @@ metadata:
 spec:
   type: ClusterIP
   ports:
-    - port: {{ include "xnat.postgresql.postgresqlPort" . }}
-      targetPort: {{ include "xnat.postgresql.postgresqlPort" . }}
-      protocol: TCP
-      name: postgresql
+    {{- include "xnat.postgresql.servicePorts" . | nindent 4 }}
 ---
 apiVersion: v1
 kind: EndpointSlice
