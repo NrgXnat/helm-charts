@@ -25,7 +25,9 @@ spec:
   imageName: ghcr.io/cloudnative-pg/postgresql:{{ .Values.cnpg.cluster.version }}
   storage:
     size: {{ .Values.cnpg.cluster.storage.size }}
-    storageClass: {{ .Values.cnpg.cluster.storage.storageClass }}
+    {{- with .Values.cnpg.cluster.storage.storageClass }}
+    storageClass: {{ . }}
+    {{- end }}
   resources: {{- .Values.cnpg.cluster.resources | toYaml | nindent 4 }}
   enableSuperuserAccess: {{ .Values.cnpg.cluster.enableSuperuserAccess }}
   bootstrap:
