@@ -1,0 +1,11 @@
+{{- if .Values.metrics.jmx.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "xnat.fullname" . }}-jmx
+  labels:
+    {{- include "xnat.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- toYaml .Values.metrics.jmx.config | nindent 4 }}
+{{- end }}
