@@ -1,0 +1,37 @@
+{{- if .Values.tests.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "xnat.fullname" . }}-test-connection
+  labels:
+    {{- include "xnat.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    {{- toYaml .Values.podSecurityContext | nindent 4 }}
+  containers:
+    - name: test
+      image: {{ .Values.tests.image }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      command: ["sh", "-c"]
+      args:
+        - |
+          url="http://{{ include "xnat.fullname" . }}:{{ .Values.service.port }}{{ .Values.tests.path }}"
+          echo "Probing ${url}"
+          for i in $(seq 1 {{ .Values.tests.retries }}); do
+            if wget -q -O- "${url}" >/dev/null 2>&1; then
+              echo "XNAT is reachable"; exit 0
+            fi
+            echo "attempt ${i}/{{ .Values.tests.retries }}: not ready, waiting {{ .Values.tests.retryDelaySeconds }}s"
+            sleep {{ .Values.tests.retryDelaySeconds }}
+          done
+          echo "XNAT did not become reachable at ${url}"; exit 1
+{{- end }}

@@ -81,6 +81,17 @@
       "additionalProperties": true,
       "properties": { "enabled": { "type": "boolean" } }
     },
+    "tests": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": { "type": "string" },
+        "path": { "type": "string" },
+        "retries": { "type": "integer", "minimum": 1 },
+        "retryDelaySeconds": { "type": "integer", "minimum": 0 }
+      }
+    },
     "redis": { "type": "object", "additionalProperties": true },
     "cnpg": { "type": "object", "additionalProperties": true },
     "activemq": { "type": "object", "additionalProperties": true },

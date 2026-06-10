@@ -178,6 +178,18 @@ lifecycle:
     exec:
       command: ["sh", "-c", "sleep 20"]
 
+# `helm test` connection check: a Pod (helm.sh/hook: test) that polls XNAT's
+# /xapi/siteConfig/buildInfo through the Service. Run it with
+# `helm test <release>`; the hook Pod is only created during a test run.
+tests:
+  enabled: true
+  image: busybox:1.36
+  # Endpoint polled through the Service. buildInfo is XNAT's canonical, public
+  # health endpoint; override if your deployment serves it elsewhere or gates it.
+  path: /xapi/siteConfig/buildInfo
+  retries: 10
+  retryDelaySeconds: 6
+
 nodeSelector: {}
 
 # -- use this to specify a single node on which to run XNAT in host network mode
