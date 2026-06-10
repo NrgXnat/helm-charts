@@ -1,0 +1,7 @@
+# Minimal values that satisfy the chart's `required` credential guards so
+# `helm lint` / `helm template` / chart-testing can render the defaults.
+# These are NOT real secrets and must not be used for a real deployment.
+cnpg:
+  cluster:
+    credentials:
+      password: "ci-only-not-a-real-secret"

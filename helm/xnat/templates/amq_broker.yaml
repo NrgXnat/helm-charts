@@ -26,6 +26,6 @@ spec:
           name: "{{ .Values.activemq.existingSecret.name }}"
           key: "{{ .Values.activemq.existingSecret.key }}"
     {{- else }}
-      value: "{{ .Values.activemq.broker.password }}"
+      value: "{{ required "activemq.broker.password is required when the broker is enabled without activemq.existingSecret" .Values.activemq.broker.password }}"
     {{- end }}
 {{- end }}

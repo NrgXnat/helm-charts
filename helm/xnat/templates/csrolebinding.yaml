@@ -2,12 +2,14 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: container_role_binding
+  name: {{ include "xnat.fullname" . }}-cs
+  labels:
+    {{- include "xnat.labels" . | nindent 4 }}
 subjects:
 - kind: ServiceAccount
   name: {{ include "xnat.serviceAccountName" . }}
 roleRef:
   kind: Role
-  name: container_role
+  name: {{ include "xnat.fullname" . }}-cs
   apiGroup: rbac.authorization.k8s.io
 {{- end }}
