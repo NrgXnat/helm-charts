@@ -1,16 +1,52 @@
 # Default values for xnat.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
+# Postfix relay subchart (bokysan/docker-postfix): the in-cluster relay
+# XNAT's [notifications] SMTP settings point at; the relay authenticates
+# onward to your real mail provider. Disable it if XNAT talks to an
+# external SMTP server directly, or for dev/test installs that use the
+# mailpit sink below instead.
 mail:
   enabled: false # Set to true to deploy bundled postfix relay
   existingSecret: postfix-password
   config:
     general:
       ALLOWED_SENDER_DOMAINS: "xnat.org"
-      RELAYHOST: "smtp.myrelay.net:587"
+      # REQUIRED when mail.enabled -- no default; set your real SMTP
+      # relay here. Render fails if mail.enabled and this is empty.
+      RELAYHOST: ""
       RELAYHOST_USERNAME: apikey
       #RELAYHOST_PASSWORD: ${RELAYHOST_PASSWORD}
       MASQUERADED_DOMAINS: "xnat.org"
+
+# SMTP sink for dev/test installs: accepts every message, stores it
+# in-container (browse/inspect via web UI and JSON API on port 8025),
+# and architecturally cannot relay anything onward. Point XNAT's
+# [notifications] SMTP host at <release>-mailpit:1025. Typically paired
+# with mail.enabled=false. Messages are capped (oldest pruned) and die
+# with the pod -- this is a sink, not a mailbox.
+mailpit:
+  enabled: false
+  image: axllent/mailpit:v1.30.1
+  maxMessages: 500
+  # Matches the xnat container's hardening so the sink also passes
+  # "restricted" Pod Security Admission. Override if your image needs root.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
 
 # In order to use the following activemq section you must install the Ark-MQ broker found at
 # https://github.com/arkmq-org/activemq-artemis-operator/blob/main/docs/getting-started/quick-start.md

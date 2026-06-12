@@ -1,0 +1,10 @@
+{{- /*
+Fail the render when the bundled relay is enabled but RELAYHOST is
+unset. Set a real relay, disable the relay, or use the mailpit sink
+for dev/test.
+*/}}
+{{- if .Values.mail.enabled }}
+{{- if not (dig "config" "general" "RELAYHOST" "" .Values.mail) }}
+{{- fail "mail.enabled is true but mail.config.general.RELAYHOST is not set. Set your real SMTP relay (e.g. email-smtp.us-east-1.amazonaws.com:587), or set mail.enabled=false (external SMTP, or dev/test installs using mailpit.enabled=true)." }}
+{{- end }}
+{{- end }}
