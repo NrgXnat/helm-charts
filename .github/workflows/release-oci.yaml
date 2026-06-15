@@ -54,7 +54,7 @@ jobs:
       - name: Auto-bump changed chart versions
         run: |
           set -euo pipefail
-          read_field() { awk -F': *' "/^[[:space:]]*$2[[:space:]]*:/{print \$2; exit}" "$1" | tr -d '"' | tr -d '[:space:]'; }
+          read_field() { awk -F': *' "/^$2[[:space:]]*:/{print \$2; exit}" "$1" | tr -d "\"'" | tr -d '[:space:]'; }
           tags=()
           for chart in helm/*/; do
             [ -f "${chart}Chart.yaml" ] || continue
@@ -71,7 +71,7 @@ jobs:
             # play — keep it as-is instead of bumping again.
             tagged_ver=""
             if [ -n "${last_tag}" ]; then
-              tagged_ver=$(git show "${last_tag}:${chart}Chart.yaml" 2>/dev/null | awk -F': *' '/^[[:space:]]*version[[:space:]]*:/{print $2; exit}' | tr -d '"' | tr -d '[:space:]' || true)
+              tagged_ver=$(git show "${last_tag}:${chart}Chart.yaml" 2>/dev/null | awk -F': *' '/^version[[:space:]]*:/{print $2; exit}' | tr -d "\"'" | tr -d '[:space:]' || true)
             fi
             if [ -n "${tagged_ver}" ] && [ "${cur}" != "${tagged_ver}" ]; then
               new="${cur}"
@@ -109,7 +109,7 @@ jobs:
               continue
             fi
             if [ "${new}" != "${cur}" ]; then
-              sed -i -E "s/^[[:space:]]*version[[:space:]]*:.*/version: ${new}/" "${chart}Chart.yaml"
+              sed -i -E "s/^version[[:space:]]*:.*/version: ${new}/" "${chart}Chart.yaml"
               git add "${chart}Chart.yaml"
             fi
             tags+=("${name}-${new}")
@@ -137,7 +137,7 @@ jobs:
       - name: Package and push charts
         run: |
           set -euo pipefail
-          read_field() { awk -F': *' "/^[[:space:]]*$2[[:space:]]*:/{print \$2; exit}" "$1" | tr -d '"' | tr -d '[:space:]'; }
+          read_field() { awk -F': *' "/^$2[[:space:]]*:/{print \$2; exit}" "$1" | tr -d "\"'" | tr -d '[:space:]'; }
           owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           registry="oci://ghcr.io/${owner}/charts"
           mkdir -p dist
