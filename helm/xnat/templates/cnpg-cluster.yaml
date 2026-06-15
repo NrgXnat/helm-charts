@@ -43,4 +43,10 @@ spec:
   {{- if .Values.cnpg.cluster.managed }}
   managed: {{- .Values.cnpg.cluster.managed | toYaml | nindent 4 }}
   {{- end }}
+  {{- if .Values.cnpg.cluster.livenessProbeTimeout }}
+  livenessProbeTimeout: {{ .Values.cnpg.cluster.livenessProbeTimeout }}
+  {{- end }}
+  {{- if .Values.cnpg.cluster.probes }}
+  probes: {{- .Values.cnpg.cluster.probes | toYaml | nindent 4 }}
+  {{- end }}
 {{- end }}

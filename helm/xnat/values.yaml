@@ -359,7 +359,19 @@ cnpg:
     # CNPG can include roles and services in cluster definitions.
     # See the official docs for more information
     # https://cloudnative-pg.io/docs/1.29/cloudnative-pg.v1#managedconfiguration
-    managed: {}  
+    managed: {}
+    # CNPG instance health / probe tuning, passed through verbatim to the
+    # Cluster spec. Most relevant for single-instance clusters (instances: 1):
+    # the liveness probe's default "primary isolation check" restarts the sole
+    # primary on a transient loss of Kubernetes API connectivity, even though
+    # there is no standby to fail over to. Disable it there, and/or widen
+    # livenessProbeTimeout to ride out brief node<->API blips.
+    # Docs: https://cloudnative-pg.io/docs/1.29/instance_manager/
+    livenessProbeTimeout: null   # seconds; null => CNPG default (30)
+    probes: {}
+    #   liveness:
+    #     isolationCheck:
+    #       enabled: false
   external:
     # Set only one of PostgresqlUri or postgresqlIp
     postgresqlUri: null
