@@ -49,3 +49,4 @@ dependencies:
 - name: mail
   repository: "https://bokysan.github.io/docker-postfix/"
   version: "3.6.1"
+  condition: mail.enabled
