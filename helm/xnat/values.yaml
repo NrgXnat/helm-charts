@@ -179,6 +179,50 @@ lifecycle:
     exec:
       command: ["sh", "-c", "sleep 20"]
 
+# Prometheus metrics. XNAT/Tomcat exposes no native /metrics, so JVM and Tomcat
+# MBeans are surfaced via the standard Prometheus JMX java agent. Everything
+# here is additive and off by default.
+metrics:
+  jmx:
+    enabled: false
+    # The agent serves unauthenticated, unencrypted metrics on this port (bound
+    # to all interfaces). It is added only to the in-cluster ClusterIP Service,
+    # never the Ingress; restrict scrape access with a NetworkPolicy admitting
+    # only your Prometheus.
+    port: 9404
+    # Image containing the jmx_prometheus_javaagent jar; an init container
+    # copies the jar out of it into a shared volume. No default (the agent has
+    # no single canonical image), so this is required when metrics.jmx.enabled
+    # is true. The jar is loaded in-process by the XNAT JVM, so prefer a
+    # digest-pinned image from a registry you trust (e.g. an org mirror).
+    image: ""
+    # Path to the agent jar inside metrics.jmx.image. Verify for your image,
+    # e.g. `docker run --rm <image> find / -name 'jmx_prometheus_javaagent*.jar'`.
+    agentJarPath: "/opt/jmx_exporter/jmx_prometheus_javaagent.jar"
+    resources: {}
+    # JMX rules rendered into a ConfigMap and read by the agent.
+    # whitelistObjectNames bounds cardinality by querying only core JVM and
+    # Tomcat MBeans; a bare rules: [".*"] with no whitelist exports every MBean
+    # in the JVM (often 1000+ series per pod) and can overwhelm Prometheus.
+    # Widen the whitelist for more coverage.
+    config:
+      lowercaseOutputName: true
+      lowercaseOutputLabelNames: true
+      whitelistObjectNames:
+        - "java.lang:*"
+        - "Catalina:type=GlobalRequestProcessor,name=*"
+        - "Catalina:type=ThreadPool,name=*"
+      rules:
+        - pattern: ".*"
+  # Emit a Prometheus Operator ServiceMonitor scraping metrics.jmx.port.
+  # Requires metrics.jmx.enabled (nothing exposes metrics otherwise) and the
+  # monitoring.coreos.com CRDs to be present on the cluster.
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    additionalLabels: {}
+
 nodeSelector: {}
 
 # -- use this to specify a single node on which to run XNAT in host network mode

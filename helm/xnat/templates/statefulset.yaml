@@ -51,19 +51,25 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
-          {{- if .Values.jvm.enabled }}
+          {{- if or .Values.jvm.enabled .Values.metrics.jmx.enabled }}
           env:
             # JAVA_TOOL_OPTIONS is honoured by every JVM regardless of the
-            # image's launcher, so heap sizing works without knowing whether
-            # xnat-web reads JAVA_OPTS or CATALINA_OPTS. Note: the JVM logs a
-            # one-line "Picked up JAVA_TOOL_OPTIONS:" notice to stderr.
+            # image's launcher, so heap sizing (jvm.*) and the Prometheus JMX
+            # java agent (metrics.jmx) work without knowing whether xnat-web
+            # reads JAVA_OPTS or CATALINA_OPTS. The JVM logs a one-line
+            # "Picked up JAVA_TOOL_OPTIONS:" notice to stderr.
             - name: JAVA_TOOL_OPTIONS
-              value: {{ include "xnat.jvmOpts" . | trim | quote }}
+              value: {{ include "xnat.javaToolOptions" . | quote }}
           {{- end }}
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- if .Values.metrics.jmx.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.jmx.port }}
+              protocol: TCP
+            {{- end }}
           # Probes use a TCP socket on the http port rather than an HTTP GET:
           # XNAT's health path varies by version and the old default
           # (/app/template/Login.vm#!) 404s on current xnat-web, while the #!
@@ -106,6 +112,14 @@ spec:
               mountPath: /data/xnat/home
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
+            {{- if .Values.metrics.jmx.enabled }}
+            - name: jmx-agent
+              mountPath: /jmx
+              readOnly: true
+            - name: jmx-config
+              mountPath: /etc/jmx
+              readOnly: true
+            {{- end }}
             {{- range $plugin, $p := .Values.authplugins }}
             {{- if .auth }}
             - name: auth-{{ $p.provider }}
@@ -133,6 +147,21 @@ spec:
             {{- end }}
             {{- end }}
       initContainers:
+        {{- if .Values.metrics.jmx.enabled }}
+        - name: jmx-agent
+          image: {{ required "metrics.jmx.image is required when metrics.jmx.enabled (it must contain the Prometheus jmx_prometheus_javaagent jar)" .Values.metrics.jmx.image }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["sh", "-c", "cp {{ .Values.metrics.jmx.agentJarPath }} /jmx/agent.jar"]
+          {{- with .Values.metrics.jmx.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: jmx-agent
+              mountPath: /jmx
+        {{- end }}
         {{- range $plugin, $c := .Values.plugins }}
         - name: {{ $plugin }}
           image: "{{ $c.repository }}:{{ $c.tag }}"
@@ -236,6 +265,13 @@ spec:
           emptyDir: {}
         - name: home-plugins
           emptyDir: {}
+        {{- if .Values.metrics.jmx.enabled }}
+        - name: jmx-agent
+          emptyDir: {}
+        - name: jmx-config
+          configMap:
+            name: {{ include "xnat.fullname" . }}-jmx
+        {{- end }}
         {{- with .Values.extraVolumes }}
         {{- . | toYaml | nindent 8 }}
         {{- end }}

@@ -93,3 +93,19 @@ before it can GC.
 {{- with .Values.jvm.maxMetaspace }}-XX:MaxMetaspaceSize={{ . }} {{ end -}}
 {{- with .Values.jvm.extraOpts }}{{ . }}{{ end -}}
 {{- end -}}
+
+{{/*
+Full JAVA_TOOL_OPTIONS string: the heap/metaspace opts from jvm.* (when
+jvm.enabled) plus the Prometheus JMX java agent (when metrics.jmx.enabled).
+Either or both may contribute; the result is space-joined and may be empty.
+*/}}
+{{- define "xnat.javaToolOptions" -}}
+{{- $opts := list -}}
+{{- if .Values.jvm.enabled -}}
+{{- with (include "xnat.jvmOpts" . | trim) }}{{- $opts = append $opts . -}}{{- end -}}
+{{- end -}}
+{{- if .Values.metrics.jmx.enabled -}}
+{{- $opts = append $opts (printf "-javaagent:/jmx/agent.jar=%d:/etc/jmx/config.yaml" (int .Values.metrics.jmx.port)) -}}
+{{- end -}}
+{{- $opts | join " " -}}
+{{- end -}}

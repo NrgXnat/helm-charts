@@ -88,6 +88,31 @@
     "volumes": { "type": "object", "additionalProperties": true },
     "persistence": { "type": "object", "additionalProperties": true },
     "plugins": { "type": ["object", "array"] },
-    "authplugins": { "type": ["object", "array"] }
+    "authplugins": { "type": ["object", "array"] },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "jmx": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "port": { "type": "integer" },
+            "image": { "type": "string" },
+            "agentJarPath": { "type": "string" }
+          }
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "interval": { "type": "string" },
+            "scrapeTimeout": { "type": "string" }
+          }
+        }
+      }
+    }
   }
 }
