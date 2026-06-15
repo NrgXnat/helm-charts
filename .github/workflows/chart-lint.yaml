@@ -36,11 +36,22 @@ jobs:
           done
 
       - name: helm lint
+        # Lint with each ci/*-values.yaml fixture if present (they supply the
+        # values the chart's `required` guards demand); otherwise lint defaults.
         run: |
           set -euo pipefail
+          shopt -s nullglob
           for chart in helm/*/; do
             [ -f "${chart}Chart.yaml" ] || continue
-            helm lint "${chart}"
+            fixtures=("${chart}"ci/*-values.yaml)
+            if [ ${#fixtures[@]} -eq 0 ]; then
+              helm lint "${chart}"
+            else
+              for f in "${fixtures[@]}"; do
+                echo "== lint $(basename "${chart}") [$(basename "${f}")] =="
+                helm lint "${chart}" --values "${f}"
+              done
+            fi
           done
 
       - name: Install kubeconform
@@ -49,14 +60,26 @@ jobs:
             | sudo tar -xz -C /usr/local/bin kubeconform
 
       - name: helm template + kubeconform across Kubernetes minors
+        # Render with each ci/*-values.yaml fixture if present (they supply the
+        # values the chart's `required` guards demand); otherwise render defaults.
         run: |
           set -euo pipefail
+          shopt -s nullglob
           for chart in helm/*/; do
             [ -f "${chart}Chart.yaml" ] || continue
+            fixtures=("${chart}"ci/*-values.yaml)
             for v in 1.27.0 1.29.0 1.31.0 1.33.0; do
-              echo "== $(basename "${chart}") against Kubernetes ${v} =="
-              helm template ci "${chart}" \
-                | kubeconform -summary -ignore-missing-schemas -kubernetes-version "${v}"
+              if [ ${#fixtures[@]} -eq 0 ]; then
+                echo "== $(basename "${chart}") against Kubernetes ${v} =="
+                helm template ci "${chart}" \
+                  | kubeconform -summary -ignore-missing-schemas -kubernetes-version "${v}"
+              else
+                for f in "${fixtures[@]}"; do
+                  echo "== $(basename "${chart}") [$(basename "${f}")] against Kubernetes ${v} =="
+                  helm template ci "${chart}" --values "${f}" \
+                    | kubeconform -summary -ignore-missing-schemas -kubernetes-version "${v}"
+                done
+              fi
             done
           done
 
