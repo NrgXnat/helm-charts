@@ -25,6 +25,16 @@ jobs:
 
       - uses: azure/setup-helm@v4.3.1
 
+      - name: Fetch chart dependencies
+        # Chart.lock and charts/ are gitignored, so a fresh checkout has no
+        # dependency tarballs; fetch them before lint/template/package.
+        run: |
+          set -euo pipefail
+          for chart in helm/*/; do
+            [ -f "${chart}Chart.yaml" ] || continue
+            helm dependency update "${chart}"
+          done
+
       - name: helm lint
         run: |
           set -euo pipefail
