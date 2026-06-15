@@ -150,6 +150,9 @@ jobs:
               continue
             fi
             echo "Publishing ${name} ${version} to ${registry}"
+            # Chart.lock and charts/ are gitignored, so fetch dependencies
+            # before packaging (otherwise helm package errors on missing deps).
+            helm dependency update "${chart}"
             helm package "${chart}" -d dist/
             helm push "dist/${name}-${version}.tgz" "${registry}"
           done
