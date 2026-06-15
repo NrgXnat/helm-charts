@@ -1,0 +1,155 @@
+name: release-oci
+
+# On push to main, auto-bump each changed chart's version from its Conventional
+# Commits, tag it (<name>-<semver>), and publish it to GHCR as an OCI artifact.
+# Consume with (Helm 3.8+):
+#   helm install <release> oci://ghcr.io/<owner>/charts/<chart> --version <ver>
+#
+# Versioning is automatic: the bump level is derived from the commits touching
+# each chart since its last <name>-<semver> tag — `feat:` -> minor,
+# `fix:`/`chore:`/etc -> patch, a `!:` subject or a `BREAKING CHANGE` footer ->
+# major. A manual version bump in the same change is respected (no double-bump),
+# so you normally do NOT hand-edit Chart.yaml `version:`.
+#
+# One-off setup by a repo admin:
+#   - The job pushes the bump commit + tag back to main, so the
+#     github-actions bot must be permitted to push to main (add it to the
+#     branch-protection bypass list, or replace GITHUB_TOKEN with a PAT /
+#     GitHub App token that can push).
+#   - After the first publish, set the GitHub Package visibility to Public and
+#     link it to this repo so consumers can pull without authentication.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'helm/**'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-oci
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Skip the workflow's own bump commit (belt-and-suspenders; GitHub also
+    # honours [skip ci] on the head commit).
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.3.1
+        with:
+          fetch-depth: 0
+
+      - uses: azure/setup-helm@v4.3.1
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Auto-bump changed chart versions
+        run: |
+          set -euo pipefail
+          read_field() { awk -F': *' "/^$2[[:space:]]*:/{print \$2; exit}" "$1" | tr -d "\"'" | tr -d '[:space:]'; }
+          tags=()
+          for chart in helm/*/; do
+            [ -f "${chart}Chart.yaml" ] || continue
+            name=$(read_field "${chart}Chart.yaml" name)
+            cur=$(read_field "${chart}Chart.yaml" version)
+            last_tag=$(git tag --list "${name}-*" --sort=-v:refname | grep -E "^${name}-[0-9]+\.[0-9]+\.[0-9]+$" | head -n1 || true)
+            range="${last_tag:+${last_tag}..}HEAD"
+            subjects=$(git log "${range}" --pretty=%s -- "${chart}")
+            bodies=$(git log "${range}" --pretty=%B -- "${chart}")
+            [ -n "${subjects}" ] || { echo "${name}: no new commits since ${last_tag:-repo start}"; continue; }
+
+            # Bump only if it hasn't already happened: if the version already
+            # differs from the one at the last release tag, a manual bump is in
+            # play — keep it as-is instead of bumping again.
+            tagged_ver=""
+            if [ -n "${last_tag}" ]; then
+              tagged_ver=$(git show "${last_tag}:${chart}Chart.yaml" 2>/dev/null | awk -F': *' '/^version[[:space:]]*:/{print $2; exit}' | tr -d "\"'" | tr -d '[:space:]' || true)
+            fi
+            if [ -n "${tagged_ver}" ] && [ "${cur}" != "${tagged_ver}" ]; then
+              new="${cur}"
+              echo "${name}: already bumped ${tagged_ver} -> ${cur}; not bumping again"
+            else
+              level=patch
+              if printf '%s\n' "${subjects}" | grep -qiE '^[a-z]+(\([^)]+\))?!:' || printf '%s\n' "${bodies}" | grep -q 'BREAKING CHANGE'; then
+                level=major
+              elif printf '%s\n' "${subjects}" | grep -qiE '^feat(\([^)]+\))?:'; then
+                level=minor
+              fi
+              # Normalise to X.Y.Z before arithmetic: drop any -prerelease /
+              # +build suffix and default missing minor/patch, then require
+              # numeric parts so a malformed version fails loudly instead of
+              # tagging and publishing a garbage version.
+              base="${cur%%-*}"; base="${base%%+*}"
+              IFS=. read -r MA MI PA <<< "${base}"
+              MI="${MI:-0}"; PA="${PA:-0}"
+              if ! printf '%s' "${MA}.${MI}.${PA}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+                echo "ERROR: ${name} version '${cur}' is not a normalisable X.Y.Z semver" >&2
+                exit 1
+              fi
+              case "${level}" in
+                major) MA=$((MA + 1)); MI=0; PA=0 ;;
+                minor) MI=$((MI + 1)); PA=0 ;;
+                patch) PA=$((PA + 1)) ;;
+              esac
+              new="${MA}.${MI}.${PA}"
+              echo "${name}: ${cur} -> ${new} (${level})"
+            fi
+
+            # Idempotent: if this version is already released, do nothing.
+            if git rev-parse -q --verify "refs/tags/${name}-${new}" >/dev/null; then
+              echo "${name}-${new} already released; skipping"
+              continue
+            fi
+            if [ "${new}" != "${cur}" ]; then
+              sed -i -E "s/^version[[:space:]]*:.*/version: ${new}/" "${chart}Chart.yaml"
+              git add "${chart}Chart.yaml"
+            fi
+            tags+=("${name}-${new}")
+          done
+
+          if [ ${#tags[@]} -eq 0 ]; then
+            echo "Nothing to release."
+            exit 0
+          fi
+          # Commit the bumps first (if any are staged) so the tags point at the
+          # commit that carries the new version; manual-only bumps tag HEAD.
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): bump chart versions [skip ci]"
+          fi
+          for t in "${tags[@]}"; do
+            git tag -a "${t}" -m "${t}"
+          done
+          git push --follow-tags origin HEAD:main
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Package and push charts
+        run: |
+          set -euo pipefail
+          read_field() { awk -F': *' "/^$2[[:space:]]*:/{print \$2; exit}" "$1" | tr -d "\"'" | tr -d '[:space:]'; }
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          registry="oci://ghcr.io/${owner}/charts"
+          mkdir -p dist
+          for chart in helm/*/; do
+            [ -f "${chart}Chart.yaml" ] || continue
+            name=$(read_field "${chart}Chart.yaml" name)
+            version=$(read_field "${chart}Chart.yaml" version)
+            if helm show chart "${registry}/${name}" --version "${version}" >/dev/null 2>&1; then
+              echo "${name} ${version} already published; skipping"
+              continue
+            fi
+            echo "Publishing ${name} ${version} to ${registry}"
+            helm package "${chart}" -d dist/
+            helm push "dist/${name}-${version}.tgz" "${registry}"
+          done
