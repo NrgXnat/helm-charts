@@ -1,0 +1,8 @@
+# Minimal values that satisfy the chart's `required` credential guards so
+# `helm lint` / `helm template` / chart-testing can render the defaults.
+# This password IS rendered into a real Kubernetes Secret (see cnpg-cluster.yaml
+# and secret.yaml); it is a throwaway CI placeholder, never use it for a real deployment.
+cnpg:
+  cluster:
+    credentials:
+      password: "ci-only-placeholder"

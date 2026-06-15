@@ -19,7 +19,9 @@ activemq:
   broker:
     enabled: false
     user: admin
-    password: "admin"
+    # No default password. Set this (or activemq.existingSecret) when the broker
+    # is enabled, otherwise install fails fast instead of shipping a known one.
+    password: ""
     port: 62626
     # Passed directly to the broker. See the official documentation for arguments that can be placed here.
     deploymentPlan:
@@ -57,6 +59,10 @@ redis:
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
+  # Mount the SA token into the pod. null = mount only when containerService is
+  # enabled (the only feature that calls the Kubernetes API); set true/false to
+  # force it. XNAT itself does not need the token.
+  automountServiceAccountToken: null
   # Annotations to add to the service account
   annotations: {}
   # The name of the service account to use.
@@ -298,7 +304,7 @@ extraVolumeMounts: []
 initContainers: []
 
 # Extra lines can be added to the config secret 
-extraConfig: []
+extraConfig: {}
 # "key": "value"
 
 # Setting to false will prevent creation of the config secret.
@@ -332,7 +338,9 @@ cnpg:
     enabled: true # Set to false to use your own DB
     name: "" # Defaults to "{release-name}-postgres"
     instances: 1
-    version: 15
+    # Pin a patch tag for reproducible builds. PG16+ is fine for new installs,
+    # but bumping the major on an existing cluster forces a major upgrade.
+    version: "15.7"
     storage:
       size: "50Gi"
       storageClass: "default"
@@ -343,19 +351,23 @@ cnpg:
       limits:
         cpu: 16
         memory: "32Gi"
-    tolerations: {}
+    tolerations: []
     nodeSelector: {}
     parameters:
       max_connections: "100"
       shared_buffers: "256MB"
       standard_conforming_strings: "off"
-    enableSuperuserAccess: true
+    # Applications don't need a postgres superuser secret exposed.
+    enableSuperuserAccess: false
     credentials:
       # Always use an external secret for production deployments.
       externalSecret: null
       database: "xnat-web"
       username: "xnat-web"
-      password: "xnat-web"
+      # No default password. Provide one (or set externalSecret) when
+      # cnpg.cluster.enabled, otherwise install fails fast instead of generating
+      # a Secret with a known password.
+      password: ""
     # CNPG can include roles and services in cluster definitions.
     # See the official docs for more information
     # https://cloudnative-pg.io/docs/1.29/cloudnative-pg.v1#managedconfiguration

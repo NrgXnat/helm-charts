@@ -2,7 +2,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: cluster_service_ready
+  name: {{ include "xnat.fullname" . }}-cs-ready
+  labels:
+    {{- include "xnat.labels" . | nindent 4 }}
 rules:
   - nonResourceURLs: ["/readyz", "/readyz/*"]
     verbs: ["get"]

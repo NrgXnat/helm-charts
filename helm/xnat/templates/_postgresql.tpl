@@ -42,7 +42,7 @@ name/protocol stay in lockstep.
 {{- end -}}
 
 {{- define "xnat.postgresql.postgresqlPassword" -}}
-{{- .Values.cnpg.cluster.credentials.password }}
+{{- required "cnpg.cluster.credentials.password is required: it sets XNAT's JDBC datasource password in both bundled-CNPG and external-postgres modes" .Values.cnpg.cluster.credentials.password -}}
 {{- end -}}
 
 {{- define "xnat.postgresql.clusterName" -}}
