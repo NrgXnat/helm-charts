@@ -12,10 +12,12 @@ name: release-oci
 # so you normally do NOT hand-edit Chart.yaml `version:`.
 #
 # One-off setup by a repo admin:
-#   - The job pushes the bump commit + tag back to main, so the
-#     github-actions bot must be permitted to push to main (add it to the
-#     branch-protection bypass list, or replace GITHUB_TOKEN with a PAT /
-#     GitHub App token that can push).
+#   - The job pushes the bump commit + tag back to main, which the branch
+#     ruleset blocks. It authenticates as a GitHub App so the push can bypass
+#     that rule. Create an App with Contents: read-and-write, install it on
+#     this repo, add it to the ruleset's bypass list, and store its credentials
+#     as the RELEASE_APP_CLIENT_ID and RELEASE_APP_PRIVATE_KEY secrets. (The OCI
+#     push still uses the built-in GITHUB_TOKEN, so the App needs no other scope.)
 #   - After the first publish, set the GitHub Package visibility to Public and
 #     link it to this repo so consumers can pull without authentication.
 on:
@@ -40,16 +42,33 @@ jobs:
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     steps:
+      - name: Generate a GitHub App token
+        # The bump commit + tag are pushed as this App so the push bypasses the
+        # branch ruleset (the App must be on the ruleset's bypass list).
+        id: app-token
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v4.3.1
         with:
           fetch-depth: 0
+          # Persist the App token so `git push` authenticates as the App.
+          token: ${{ steps.app-token.outputs.token }}
 
       - uses: azure/setup-helm@v4.3.1
 
       - name: Configure git identity
+        # Attribute the bump commit to the App's bot user.
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          set -euo pipefail
+          slug="${{ steps.app-token.outputs.app-slug }}"
+          uid=$(gh api "/users/${slug}[bot]" --jq .id)
+          git config user.name  "${slug}[bot]"
+          git config user.email "${uid}+${slug}[bot]@users.noreply.github.com"
 
       - name: Auto-bump changed chart versions
         run: |
