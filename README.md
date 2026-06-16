@@ -11,3 +11,14 @@ Requires:
 * Workstation with the following:
   * `kubectl` client configured to control your k8s service
   * `helm` client
+
+## Install
+
+Released charts are published to GitHub Container Registry as OCI artifacts (Helm 3.8+):
+
+```sh
+helm install my-xnat oci://ghcr.io/nrgxnat/charts/xnat --version <version>
+```
+
+Omit `--version` to pull the latest. Chart versions are assigned automatically on
+merge to `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#versioning-automated).
