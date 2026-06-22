@@ -44,8 +44,14 @@ imagePullSecrets: null
 nameOverride: ""
 fullnameOverride: ""
 
+# XNAT core does not consume Redis (it uses an on-heap Hibernate L2 cache, and
+# no template wires a Redis host/port into XNAT's config). The legacy Ansible
+# deploy also ran with this off. Left here, off by default, as an optional
+# dependency for setups that wire Redis themselves; enabling it otherwise just
+# schedules an unused pod (and pulls a Bitnami image subject to the public
+# registry's deprecation).
 redis:
-  enabled: true
+  enabled: false
   pullPolicy: IfNotPresent
   master:
     masterCount: 1
