@@ -366,8 +366,17 @@ cnpg:
     # Applications don't need a postgres superuser secret exposed.
     enableSuperuserAccess: false
     credentials:
-      # Always use an external secret for production deployments.
+      # When set, the XNAT JDBC datasource password is sourced from this
+      # existing Secret at runtime (an init container reads it via env and
+      # writes it into xnat-conf.properties), so the password never appears in
+      # the chart-rendered config Secret. Point it at an ESO-managed Secret, or
+      # the CNPG-managed app-credentials Secret. Leave null to use the inline
+      # `password` below (dev/quickstart). Also used to bootstrap the bundled
+      # CNPG cluster when cnpg.cluster.enabled.
       externalSecret: null
+      # Key holding the password within externalSecret (CNPG basic-auth uses
+      # "password"; override for an ESO Secret with a different key).
+      externalSecretPasswordKey: password
       database: "xnat-web"
       username: "xnat-web"
       # No default password. Provide one (or set externalSecret) when
