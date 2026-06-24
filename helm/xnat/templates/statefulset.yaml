@@ -177,7 +177,7 @@ spec:
             - s3
             - cp
             - --recursive
-            - {{ printf "s3://%s/%s/" (required "pluginInstaller.s3.bucket is required for syncPrefix" .Values.pluginInstaller.s3.bucket) (trimSuffix "/" .Values.pluginInstaller.s3.prefix) | quote }}
+            - {{ printf "s3://%s/%s/" (required "pluginInstaller.s3.bucket is required for syncPrefix" .Values.pluginInstaller.s3.bucket) (trimSuffix "/" (required "pluginInstaller.s3.prefix is required for syncPrefix (an empty prefix would recursively copy the whole bucket into the plugins dir)" .Values.pluginInstaller.s3.prefix)) | quote }}
             - /data/xnat/home/plugins/
           env:
             - name: HOME

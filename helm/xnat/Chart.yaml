@@ -24,7 +24,9 @@ type: application
 # This is the chart version. This version number should be incremented each time you make changes
 # to the chart and its templates, including the app version.
 # Versions are expected to follow Semantic Versioning (https://semver.org/)
-version: 2.0.0
+# 2.2.0: add the S3 plugin installer (per-plugin `source: s3` + pluginInstaller.s3.syncPrefix).
+# Must exceed the highest published tag (xnat-2.1.0) so chart-releaser cuts a new tag on merge.
+version: 2.2.0
 
 # This is the version number of the application being deployed. This version number should be
 # incremented each time you make changes to the application. Versions are not expected to
