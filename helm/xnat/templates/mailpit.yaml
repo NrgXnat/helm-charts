@@ -1,0 +1,79 @@
+{{- /*
+SMTP sink for dev/test installs (mailpit.enabled): accepts every
+message on :1025, stores it in-container, exposes a web UI + JSON API
+on :8025, and has no relay configuration -- mail cannot leave the
+cluster through it. Point XNAT's [notifications] SMTP host at
+{{ include "xnat.fullname" . }}-mailpit:1025.
+*/}}
+{{- if .Values.mailpit.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "xnat.fullname" . }}-mailpit
+  labels:
+    {{- include "xnat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mailpit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "xnat.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mailpit
+  template:
+    metadata:
+      labels:
+        {{- include "xnat.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mailpit
+    spec:
+      containers:
+        - name: mailpit
+          image: {{ .Values.mailpit.image }}
+          {{- with .Values.mailpit.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: MP_MAX_MESSAGES
+              value: {{ .Values.mailpit.maxMessages | quote }}
+          ports:
+            - name: smtp
+              containerPort: 1025
+            - name: http
+              containerPort: 8025
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          {{- with .Values.mailpit.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "xnat.fullname" . }}-mailpit
+  labels:
+    {{- include "xnat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mailpit
+spec:
+  selector:
+    {{- include "xnat.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mailpit
+  ports:
+    - name: smtp
+      port: 1025
+      targetPort: smtp
+    - name: http
+      port: 8025
+      targetPort: http
+{{- end }}
