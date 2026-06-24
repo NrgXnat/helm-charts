@@ -162,13 +162,98 @@ spec:
             - name: jmx-agent
               mountPath: /jmx
         {{- end }}
+        {{- if .Values.pluginInstaller.s3.syncPrefix }}
+        # Bulk S3 install: copy every JAR staged under the release prefix into
+        # the shared home-plugins volume with the AWS CLI (pod IRSA role). The
+        # plugin SET is whatever was staged to S3 -- no per-plugin list to keep
+        # in sync with the release manifest.
+        - name: install-plugins-from-s3
+          image: {{ required "pluginInstaller.s3.image is required when pluginInstaller.s3.syncPrefix is set" .Values.pluginInstaller.s3.image }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            - aws
+            - s3
+            - cp
+            - --recursive
+            - {{ printf "s3://%s/%s/" (required "pluginInstaller.s3.bucket is required for syncPrefix" .Values.pluginInstaller.s3.bucket) (trimSuffix "/" .Values.pluginInstaller.s3.prefix) | quote }}
+            - /data/xnat/home/plugins/
+          env:
+            - name: HOME
+              value: /tmp
+            {{- with .Values.pluginInstaller.s3.region }}
+            - name: AWS_REGION
+              value: {{ . | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: home-plugins
+              mountPath: /data/xnat/home/plugins
+        {{- end }}
         {{- range $plugin, $c := .Values.plugins }}
+        {{- if eq ($c.source | default "") "s3" }}
+        # S3 form: copy a pre-staged JAR from the release bucket with the AWS CLI,
+        # using the pod's IRSA role. No custom installer image and no in-cluster
+        # Maven/registry auth -- acquire (and any logback rewrite) happen at
+        # staging time, so the test pulls the exact bytes that ship.
+        - name: {{ $plugin }}
+          image: {{ required "pluginInstaller.s3.image is required when a plugins entry sets source: s3" $.Values.pluginInstaller.s3.image }}
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.securityContext | nindent 12 }}
+          command:
+            - aws
+            - s3
+            - cp
+            - {{ $c.s3Uri | default (printf "s3://%s/%s/%s" $.Values.pluginInstaller.s3.bucket (trimSuffix "/" $.Values.pluginInstaller.s3.prefix) ($c.target | default (printf "%s.jar" $plugin))) | quote }}
+            - {{ printf "/data/xnat/home/plugins/%s" ($c.target | default (printf "%s.jar" $plugin)) | quote }}
+          env:
+            - name: HOME
+              value: /tmp
+            {{- with $.Values.pluginInstaller.s3.region }}
+            - name: AWS_REGION
+              value: {{ . | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: home-plugins
+              mountPath: /data/xnat/home/plugins
+        {{- else if $c.source }}
+        # Source form: pull a raw JAR (url|coordinates|file) via the
+        # plugin-installer init container into the shared home-plugins volume.
+        - name: {{ $plugin }}
+          image: {{ required "pluginInstaller.image is required when a plugins entry sets `source`" $.Values.pluginInstaller.image }}
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          env:
+            - name: PLUGIN_NAME
+              value: {{ $plugin | quote }}
+            - name: PLUGIN_TARGET
+              value: {{ $c.target | default (printf "%s.jar" $plugin) | quote }}
+            - name: PLUGIN_SOURCE_TYPE
+              value: {{ $c.source | quote }}
+            {{- with $c.url }}
+            - name: PLUGIN_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $c.coordinates }}
+            - name: PLUGIN_COORDINATES
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $c.file }}
+            - name: PLUGIN_FILE
+              value: {{ . | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: home-plugins
+              mountPath: /data/xnat/home/plugins
+        {{- else }}
+        # Image form: pre-built plugin OCI image; its entrypoint copies the JAR in.
         - name: {{ $plugin }}
           image: "{{ $c.repository }}:{{ $c.tag }}"
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
           volumeMounts:
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
+        {{- end }}
         {{- end }}
         {{- if .Values.activemq.broker.enabled }}
         - name: wait-for-amq

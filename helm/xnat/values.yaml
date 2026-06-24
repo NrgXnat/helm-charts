@@ -311,10 +311,46 @@ extraConfig: {}
 # A secret with the contents of xnat-conf.properties named the same as the release name will need to be created manually.
 createConfigSecret: true
 
+# Unified plugin declaration: each entry is IMAGE form (backward compat),
+# SOURCE form (url|coordinates|file, via the plugin-installer init container),
+# or S3 form (a pre-staged JAR copied with the AWS CLI). All render from this
+# one map; pick per plugin.
 plugins: []
+  # Image form — pre-built plugin OCI image (its entrypoint copies the JAR in):
   # container-service:
   #  repository: radiologicsit/container-service
   #  tag: "3.3.0"
+  # Source form — pull a raw JAR via the plugin-installer init container:
+  # container-service:
+  #  source: coordinates        # url | coordinates | file | s3
+  #  coordinates: org.nrg.xnatx.plugins:container-service:3.8.1:jar:fat  # mvn -Dartifact
+  #  url: https://.../foo.jar   # for source: url
+  #  file: /mnt/foo/bar.jar     # for source: file
+  #  target: ""                 # output filename in the plugins dir; default <name>.jar
+  # S3 form — `aws s3 cp` a pre-staged JAR using the pod's IRSA role (no installer image):
+  # container-service:
+  #  source: s3
+  #  s3Uri: s3://bucket/key.jar # optional; default s3://<pluginInstaller.s3.bucket>/<prefix>/<target>
+  #  target: ""                 # output filename; default <name>.jar
+# Init-container image that installs source-form (url|coordinates|file) plugins
+# above (the xnat-plugin-installer). Required only when a plugins entry sets
+# `source` to one of those; the deployer supplies the image ref (not defaulted).
+pluginInstaller:
+  image: ""
+  # S3 plugin install via `aws s3 cp` (no custom image) using the pod's IRSA
+  # role -- set serviceAccount.annotations."eks.amazonaws.com/role-arn".
+  # `image` is a stock AWS CLI image (pin a tag in production). Two modes:
+  #   - per-plugin: a plugins entry with `source: s3` (URI defaults to
+  #     s3://<bucket>/<prefix>/<target>, or per-plugin s3Uri).
+  #   - syncPrefix: true -> ONE init container copies the whole
+  #     s3://<bucket>/<prefix>/ tree into the plugins dir. The plugin set is
+  #     whatever is staged there -- no per-plugin list (leave plugins: []).
+  s3:
+    image: public.ecr.aws/aws-cli/aws-cli:latest
+    bucket: ""
+    prefix: ""
+    region: ""
+    syncPrefix: false
 containerService: false
 namespace: ""
 authplugins: []
