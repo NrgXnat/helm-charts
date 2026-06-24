@@ -260,46 +260,52 @@ nfs:
   pathPrefix: ""
   mountOptions: []
 
+# Persistent volumes for XNAT data. Defaults use ReadWriteOnce and the cluster's
+# default StorageClass (empty storageClass), which works out of the box on a
+# single-replica install backed by block storage such as EBS gp3. For
+# multi-replica XNAT, or the container-service (whose job pods land on other
+# nodes), set the shared volumes (typically build and archive) to ReadWriteMany
+# on an RWX-capable class (EFS / NFS / FSx).
 volumes:
   xnatdata:
     nfs: false
     hostVolume: false
     existingClaim:
-    accessMode: ReadWriteMany
+    accessMode: ReadWriteOnce
     mountPath: "/data/xnat"
-    storageClass: "default"
+    storageClass: ""
     size: 100Gi
   build:
     nfs: false
     hostVolume: false
     existingClaim:
-    accessMode: ReadWriteMany
+    accessMode: ReadWriteOnce
     mountPath: "/data/xnat/build"
-    storageClass: "default"
+    storageClass: ""
     size: 100Gi
   cache:
     nfs: false
     hostVolume: false
     existingClaim:
-    accessMode: ReadWriteMany
+    accessMode: ReadWriteOnce
     mountPath: "/data/xnat/cache"
-    storageClass: "default"
+    storageClass: ""
     size: 1Ti
   archive:
     nfs: false
     hostVolume: false
     existingClaim:
-    accessMode: ReadWriteMany
+    accessMode: ReadWriteOnce
     mountPath: "/data/xnat/archive"
-    storageClass: "default"
+    storageClass: ""
     size: 100Gi
   prearchive:
     nfs: false
     hostVolume: false
     existingClaim:
-    accessMode: ReadWriteMany
+    accessMode: ReadWriteOnce
     mountPath: "/data/xnat/prearchive"
-    storageClass: "default"
+    storageClass: ""
     size: 1Ti
 
 # Any extra volumes can be defined here and will be inserted into the chart as written
@@ -349,7 +355,7 @@ cnpg:
     version: "15.7"
     storage:
       size: "50Gi"
-      storageClass: "default"
+      storageClass: ""
     resources:
       requests:
         cpu: 500m
