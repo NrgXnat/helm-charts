@@ -14,7 +14,7 @@ metadata:
     {{- include "xnat.labels" . | nindent 4 }}
     app.kubernetes.io/component: mailpit
 spec:
-  replicas: 1
+  replicas: {{ .Values.mailpit.replicaCount }}
   selector:
     matchLabels:
       {{- include "xnat.selectorLabels" . | nindent 6 }}
@@ -49,11 +49,11 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-      {{- with .Values.nodeSelector }}
+      {{- with .Values.mailpit.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.tolerations }}
+      {{- with .Values.mailpit.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}

@@ -27,6 +27,13 @@ mail:
 # with the pod -- this is a sink, not a mailbox.
 mailpit:
   enabled: false
+  # Independent scheduling + replica count (not inherited from the xnat
+  # pod): a test sink can sit on the general pool and scale to 0 when idle
+  # -- an orchestrator scales it up per run -- instead of occupying the
+  # xnat pod's tainted/sized nodes. replicaCount: 0 = scaled down.
+  replicaCount: 1
+  nodeSelector: {}
+  tolerations: []
   image: axllent/mailpit:v1.30.1
   maxMessages: 500
   # Matches the xnat container's hardening so the sink also passes
