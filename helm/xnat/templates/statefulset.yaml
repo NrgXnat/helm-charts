@@ -306,6 +306,21 @@ spec:
               # the source file (e.g. "...=truexnat.is_primary_node=true"),
               # which Spring then fails to parse and the webapp never deploys.
               [ "$(tail -c 1 ${XNAT_HOME}/config/xnat-conf.properties)" = "" ] || echo "" >> ${XNAT_HOME}/config/xnat-conf.properties
+              {{- if .Values.cnpg.cluster.credentials.externalSecret }}
+              # Datasource password is sourced at runtime from the external
+              # secret (via XNAT_DB_PASSWORD) so it stays out of the rendered
+              # config Secret. Everything that touches the password runs inside
+              # the { set +x; } window so the script's top-level `set -x` does
+              # not echo it to the pod log; do not reference XNAT_DB_PASSWORD
+              # after `set -x` resumes. printf %s handles any special chars.
+              { set +x; } 2>/dev/null
+              if [ -z "${XNAT_DB_PASSWORD}" ]; then
+                echo "ERROR: externalSecret {{ .Values.cnpg.cluster.credentials.externalSecret }} key {{ .Values.cnpg.cluster.credentials.externalSecretPasswordKey | default "password" }} is empty or missing" >&2
+                exit 1
+              fi
+              printf 'datasource.password=%s\n' "${XNAT_DB_PASSWORD}" >> ${XNAT_HOME}/config/xnat-conf.properties
+              set -x
+              {{- end }}
               if [[ "${REP[-1]}" -eq "0" ]]; then
                 echo "xnat.is_primary_node=true" >> ${XNAT_HOME}/config/xnat-conf.properties
               else
@@ -322,6 +337,13 @@ spec:
               fieldRef:
                 apiVersion: v1
                 fieldPath: metadata.name           
+          {{- if .Values.cnpg.cluster.credentials.externalSecret }}
+          - name: XNAT_DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Values.cnpg.cluster.credentials.externalSecret }}
+                key: {{ .Values.cnpg.cluster.credentials.externalSecretPasswordKey | default "password" }}
+          {{- end }}
           volumeMounts:
             - name: tomcat
               mountPath: /TOMCAT
