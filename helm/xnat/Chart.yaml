@@ -25,8 +25,7 @@ type: application
 # to the chart and its templates, including the app version.
 # Versions are expected to follow Semantic Versioning (https://semver.org/)
 # 2.2.0: add the S3 plugin installer (per-plugin `source: s3` + pluginInstaller.s3.syncPrefix).
-# 2.3.0: add RDS IAM database auth mode (cnpg.external.iam) + a passwordless
-#        role bootstrap hook Job.
+# 2.3.0: add an opt-in RDS IAM database auth datasource mode (datasource.iam).
 # Must exceed the highest published tag so chart-releaser cuts a new tag on merge.
 version: 2.3.0
 
