@@ -486,6 +486,11 @@ cnpg:
       # the RDS master (from masterSecret) and creates the passwordless app role
       # (GRANT rds_iam) with schema-owner grants BEFORE XNAT starts. The Job
       # authenticates with the master password (not IAM), so it needs no IRSA.
+      #
+      # IMPORTANT: cnpg.cluster.credentials.username (the app role) MUST differ
+      # from the master user in masterSecret. The Job grants rds_iam to the app
+      # role, which makes that role IAM-token-only; granting it to the master
+      # would disable the master's password auth and lock this Job out.
       bootstrap:
         enabled: false
         image: "postgres:15-alpine"

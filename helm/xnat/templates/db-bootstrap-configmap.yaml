@@ -34,9 +34,15 @@ data:
     {{- if and $b.reassignFrom (ne $b.reassignFrom .Values.cnpg.cluster.credentials.username) }}
 
     -- 2) Restored-from-snapshot ownership migration: existing objects are
-    --    owned by the old master role. REASSIGN OWNED requires the executor
-    --    (the master) to be a member of BOTH roles, hence the GRANT first.
-    GRANT :"app_role" TO :"reassign_from";
+    --    owned by reassign_from. REASSIGN OWNED requires the EXECUTOR (the
+    --    connecting master) to be a member of BOTH the source and target
+    --    roles, so grant both to CURRENT_USER -- but only grant reassign_from
+    --    when it differs from the executor, since granting a role to itself
+    --    errors (the common case is reassign_from == the master).
+    GRANT :"app_role" TO CURRENT_USER;
+    SELECT format('GRANT %I TO CURRENT_USER', :'reassign_from')
+     WHERE :'reassign_from' <> current_user
+    \gexec
     REASSIGN OWNED BY :"reassign_from" TO :"app_role";
     ALTER DATABASE :"app_db" OWNER TO :"app_role";
     ALTER SCHEMA public OWNER TO :"app_role";
