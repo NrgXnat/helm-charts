@@ -1,0 +1,110 @@
+{{- if and .Values.cnpg.external.iam.enabled .Values.cnpg.external.iam.bootstrap.enabled }}
+{{- $b := .Values.cnpg.external.iam.bootstrap }}
+{{- if not $b.masterSecret.name }}
+{{- fail "cnpg.external.iam.bootstrap.masterSecret.name is required when cnpg.external.iam.bootstrap.enabled is true" }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "xnat.fullname" . }}-db-bootstrap
+  labels:
+    {{- include "xnat.labels" . | nindent 4 }}
+  annotations:
+    # Pre-install/pre-upgrade hook: creates the passwordless IAM app role (and,
+    # on a restored DB, migrates ownership) BEFORE the StatefulSet starts, since
+    # IAM auth can authenticate a role but not create it. Idempotent, so it is
+    # safe to re-run on every upgrade.
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  # Bounded so a permanently-unreachable DB fails the release instead of hanging.
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      # Deliberately NOT xnat.selectorLabels: those (name=xnat + instance=<release>)
+      # are exactly the XNAT Service selector, so a hook pod carrying them would be
+      # added to the live Service's endpoints during an upgrade and take a share of
+      # traffic while it sits in the pg_isready wait, listening on nothing. Suffix
+      # the name so the Service selector can never match this pod.
+      labels:
+        app.kubernetes.io/name: {{ include "xnat.name" . }}-db-bootstrap
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: db-bootstrap
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+    spec:
+      restartPolicy: Never
+      # The Job authenticates as the RDS master with a password (not IAM), so it
+      # needs no AWS credentials and no Kubernetes API access.
+      automountServiceAccountToken: false
+      {{- with $b.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: db-bootstrap
+          image: {{ $b.image | quote }}
+          {{- with $b.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $b.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            # readOnlyRootFilesystem is on, so give psql a writable HOME.
+            - name: HOME
+              value: /tmp
+            - name: PGHOST
+              value: {{ include "xnat.postgresql.postgresqlUri" . | quote }}
+            - name: PGPORT
+              value: {{ include "xnat.postgresql.postgresqlPort" . | quote }}
+            - name: PGDATABASE
+              value: {{ include "xnat.postgresql.postgresqlDatabase" . | quote }}
+            # RDS IAM auth aside, encrypt the master bootstrap connection too.
+            # The bootstrap image has no RDS CA bundle, so require (not verify).
+            - name: PGSSLMODE
+              value: require
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $b.masterSecret.name | quote }}
+                  key: {{ $b.masterSecret.usernameKey | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $b.masterSecret.name | quote }}
+                  key: {{ $b.masterSecret.passwordKey | quote }}
+            - name: APP_ROLE
+              value: {{ include "xnat.postgresql.postgresqlUsername" . | quote }}
+            - name: REASSIGN_FROM
+              value: {{ $b.reassignFrom | quote }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              echo "waiting for postgres at ${PGHOST}:${PGPORT} ..."
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"; do
+                sleep 5
+              done
+              echo "running bootstrap.sql as ${PGUSER} on ${PGDATABASE} ..."
+              psql -v ON_ERROR_STOP=1 \
+                -v app_role="$APP_ROLE" \
+                -v app_db="$PGDATABASE" \
+                -v reassign_from="$REASSIGN_FROM" \
+                -f /sql/bootstrap.sql
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: sql
+          configMap:
+            name: {{ include "xnat.fullname" . }}-db-bootstrap
+        - name: tmp
+          emptyDir: {}
+{{- end }}

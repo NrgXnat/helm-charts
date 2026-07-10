@@ -463,6 +463,57 @@ cnpg:
     postgresqlIp: null
     postgresqlPort: null
 
+    # RDS IAM database authentication (passwordless). When enabled, the config
+    # secret emits an AWS Advanced JDBC Wrapper datasource instead of plain
+    # pgjdbc: driver software.amazon.jdbc.Driver, a jdbc:aws-wrapper URL with
+    # wrapperPlugins=iam + TLS, and NO datasource.password. The DB role is
+    # cnpg.cluster.credentials.username (must be granted rds_iam on the
+    # instance); the password value is ignored. Requires:
+    #   - an image that bundles the AWS Advanced JDBC Wrapper (+ AWS SDK for
+    #     Java v2) and the RDS CA bundle at sslrootcert, via image.repository/tag
+    #   - serviceAccount.annotations wiring an IAM role with rds-db:connect on
+    #     arn:aws:rds-db:<region>:<acct>:dbuser:<resource_id>/<username> (e.g.
+    #     IRSA or EKS Pod Identity)
+    iam:
+      enabled: false
+      region: "" # e.g. us-east-1; signs the auth token. If empty the wrapper parses it from the RDS hostname, so set it explicitly only for non-RDS-shaped endpoints (e.g. postgresqlIp).
+      sslmode: "verify-full"
+      sslrootcert: "/etc/rds/global-bundle.pem"
+      wrapperPlugins: "iam"
+
+      # One-shot idempotent DB-role bootstrap. IAM auth can authenticate a role
+      # but cannot create it, so a pre-install/pre-upgrade hook Job connects as
+      # the RDS master (from masterSecret) and creates the passwordless app role
+      # (GRANT rds_iam) with schema-owner grants BEFORE XNAT starts. The Job
+      # authenticates with the master password (not IAM), so it needs no IRSA.
+      bootstrap:
+        enabled: false
+        image: "postgres:15-alpine"
+        # k8s Secret (synced by ESO from the RDS-managed master secret) holding
+        # the master username + password. Key names match the RDS-managed
+        # secret's JSON.
+        masterSecret:
+          name: "" # required when bootstrap enabled
+          usernameKey: "username"
+          passwordKey: "password"
+        # On a DB restored from a snapshot every object is owned by the old
+        # master role; set this to that role name to reassign ownership to the
+        # app role (cnpg.cluster.credentials.username). Empty skips the
+        # migration (correct for a fresh DB).
+        reassignFrom: ""
+        resources: {}
+        podSecurityContext:
+          runAsNonRoot: true
+          runAsUser: 65534
+          runAsGroup: 65534
+          seccompProfile:
+            type: RuntimeDefault
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+
 # TCP-socket probes against the http (8080) port; see statefulset.yaml for why
 # a socket check rather than an HTTP GET on a version-specific health path.
 probes:
