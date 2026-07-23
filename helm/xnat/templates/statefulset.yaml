@@ -297,7 +297,15 @@ spec:
               shopt -s extglob
               # Copy Tomcat folder
               [ -d /TOMCAT ] && cp -r --preserve=mode,timestamps /usr/local/tomcat/* /TOMCAT
-              chown -R {{ default "1000" .Values.securityContext.runAsUser }} /TOMCAT
+              # chown only when running as root. With a root-USER image, home-init
+              # runs as root and must re-own the copied tree to the runtime uid.
+              # With a non-root image it already runs as that uid (files are
+              # created correctly owned), and the pod fsGroup covers the
+              # volume-root dirs -- so the chown is unnecessary and would EPERM.
+              # Guarding on uid lets home-init work for both root and non-root images.
+              if [ "$(id -u)" = "0" ]; then
+                chown -R {{ default "1000" .Values.securityContext.runAsUser }} /TOMCAT
+              fi
               # Setup xnat-conf.properties
               readarray -d - -t REP <<< "${POD_NAME}"
               cp /tmp/xnat-conf.properties ${XNAT_HOME}/config/xnat-conf.properties
@@ -314,8 +322,12 @@ spec:
               echo "node.id=$(hostname)" > ${XNAT_HOME}/config/node-conf.properties
               # Copy XNAT_HOME directory excluding the plugins folder
               cp -r --preserve=mode,timestamps ${XNAT_HOME}/!(plugins) /XNAT_HOME
-              chown -R {{ default "1000" .Values.securityContext.runAsUser }} /XNAT_HOME
-              chown -R {{ default "1000" .Values.securityContext.runAsUser }} /HOME-PLUGINS
+              # See the /TOMCAT chown above: root-only, so non-root images skip it.
+              # (A no-op `if` also keeps home-init's exit code 0 when non-root.)
+              if [ "$(id -u)" = "0" ]; then
+                chown -R {{ default "1000" .Values.securityContext.runAsUser }} /XNAT_HOME
+                chown -R {{ default "1000" .Values.securityContext.runAsUser }} /HOME-PLUGINS
+              fi
           env:
           - name: POD_NAME
             valueFrom:
