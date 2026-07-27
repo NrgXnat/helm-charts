@@ -11,6 +11,19 @@
 # Ignored by images that predate the variable, so it is safe to set unconditionally.
 logConsole: plain
 
+# Extra environment variables for the xnat container, as raw Kubernetes env
+# entries (supports `value` and `valueFrom`). For any setting the chart does not
+# expose a first-class value for. Do NOT set XNAT_LOG_CONSOLE here -- it is owned
+# by `logConsole` above (duplicate env names are last-wins and confusing).
+# Example:
+#   extraEnv:
+#     - name: SOME_FLAG
+#       value: "true"
+#     - name: SOME_SECRET
+#       valueFrom:
+#         secretKeyRef: { name: my-secret, key: token }
+extraEnv: []
+
 # Postfix relay subchart (bokysan/docker-postfix): the in-cluster relay
 # XNAT's [notifications] SMTP settings point at; the relay authenticates
 # onward to your real mail provider. Disable it if XNAT talks to an

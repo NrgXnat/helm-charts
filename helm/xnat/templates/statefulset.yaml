@@ -51,7 +51,7 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
-          {{- if or .Values.jvm.enabled .Values.metrics.jmx.enabled .Values.logConsole }}
+          {{- if or .Values.jvm.enabled .Values.metrics.jmx.enabled .Values.logConsole .Values.extraEnv }}
           env:
             {{- if or .Values.jvm.enabled .Values.metrics.jmx.enabled }}
             # JAVA_TOOL_OPTIONS is honoured by every JVM regardless of the
@@ -69,6 +69,10 @@ spec:
             # safe to set unconditionally.
             - name: XNAT_LOG_CONSOLE
               value: {{ .Values.logConsole | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            # Arbitrary extra env vars (raw Kubernetes env entries; supports value / valueFrom).
+            {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- end }}
           ports:
