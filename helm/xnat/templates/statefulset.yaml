@@ -51,8 +51,9 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
-          {{- if or .Values.jvm.enabled .Values.metrics.jmx.enabled }}
+          {{- if or .Values.jvm.enabled .Values.metrics.jmx.enabled .Values.logConsole }}
           env:
+            {{- if or .Values.jvm.enabled .Values.metrics.jmx.enabled }}
             # JAVA_TOOL_OPTIONS is honoured by every JVM regardless of the
             # image's launcher, so heap sizing (jvm.*) and the Prometheus JMX
             # java agent (metrics.jmx) work without knowing whether xnat-web
@@ -60,6 +61,15 @@ spec:
             # "Picked up JAVA_TOOL_OPTIONS:" notice to stderr.
             - name: JAVA_TOOL_OPTIONS
               value: {{ include "xnat.javaToolOptions" . | quote }}
+            {{- end }}
+            {{- if .Values.logConsole }}
+            # Native stdout logging on XNAT builds that support it (XNAT-8782 /
+            # NrgXnat/xnat#23): redirects all logging (core + plugins) to stdout as
+            # plain text or JSON. Ignored by images that predate the variable, so it is
+            # safe to set unconditionally.
+            - name: XNAT_LOG_CONSOLE
+              value: {{ .Values.logConsole | quote }}
+            {{- end }}
           {{- end }}
           ports:
             - name: http

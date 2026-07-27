@@ -1,6 +1,16 @@
 # Default values for xnat.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
+
+# Native XNAT stdout logging (XNAT-8782 / NrgXnat/xnat#23). Sets the XNAT_LOG_CONSOLE
+# env var: on XNAT builds that support it, redirects all logging -- core and plugins --
+# to the container's stdout instead of files.
+#   plain -> plain-text console
+#   json  -> structured JSON (LogstashEncoder), for log aggregation (e.g. OpenSearch)
+#   ""    -> leave XNAT's file logging as configured
+# Ignored by images that predate the variable, so it is safe to set unconditionally.
+logConsole: plain
+
 # Postfix relay subchart (bokysan/docker-postfix): the in-cluster relay
 # XNAT's [notifications] SMTP settings point at; the relay authenticates
 # onward to your real mail provider. Disable it if XNAT talks to an
