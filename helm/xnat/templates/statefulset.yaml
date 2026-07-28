@@ -232,33 +232,51 @@ spec:
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
         {{- else if $c.source }}
-        # Source form: pull a raw JAR (url|coordinates|file) via the
-        # plugin-installer init container into the shared home-plugins volume.
+        {{- $target := printf "/data/xnat/home/plugins/%s" ($c.target | default (printf "%s.jar" $plugin)) }}
+        # Source form: fetch a raw JAR (url|coordinates|file) into the shared
+        # home-plugins volume. The url is resolved at render time (see
+        # xnat.pluginArtifactUrl), so the container only has to fetch it -- no
+        # custom installer image, same as the s3 form above. Written to .part and
+        # moved into place last, so a failed checksum never leaves a jar behind.
         - name: {{ $plugin }}
-          image: {{ required "pluginInstaller.image is required when a plugins entry sets `source`" $.Values.pluginInstaller.image }}
+          image: {{ $.Values.pluginInstaller.image | quote }}
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
-          env:
-            - name: PLUGIN_NAME
-              value: {{ $plugin | quote }}
-            - name: PLUGIN_TARGET
-              value: {{ $c.target | default (printf "%s.jar" $plugin) | quote }}
-            - name: PLUGIN_SOURCE_TYPE
-              value: {{ $c.source | quote }}
-            {{- with $c.url }}
-            - name: PLUGIN_URL
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with $c.coordinates }}
-            - name: PLUGIN_COORDINATES
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with $c.file }}
-            - name: PLUGIN_FILE
-              value: {{ . | quote }}
-            {{- end }}
+          {{- with $.Values.pluginInstaller.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command: ['sh', '-c']
+          args:
+            - |
+              set -eu
+              {{- if eq $c.source "file" }}
+              {{- $src := "" }}
+              {{- if $c.secret }}
+              {{- $src = printf "/mnt/plugin-%s/%s" $plugin ($c.secret.key | default "plugin.jar") }}
+              {{- else }}
+              {{- $src = required (printf "plugins.%s needs `file` (a path) or `secret` (name/key) for `source: file`" $plugin) $c.file }}
+              {{- end }}
+              cp {{ $src | quote }} {{ printf "%s.part" $target | quote }}
+              {{- else }}
+              curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused{{ if $.Values.pluginInstaller.caCertSecret }} --cacert /mnt/plugin-ca/ca.crt{{ end }} -o {{ printf "%s.part" $target | quote }} {{ include "xnat.pluginArtifactUrl" (dict "plugin" $c "name" $plugin "repo" $.Values.pluginRepository) | quote }}
+              {{- end }}
+              {{- with $c.sha256 }}
+              echo {{ . | quote }}{{ printf "  %s.part" $target | quote }} | sha256sum -c -
+              {{- end }}
+              mv {{ printf "%s.part" $target | quote }} {{ $target | quote }}
           volumeMounts:
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
+            {{- if and (eq $c.source "file") $c.secret }}
+            - name: plugin-{{ $plugin }}-jar
+              mountPath: /mnt/plugin-{{ $plugin }}
+              readOnly: true
+            {{- end }}
+            {{- if and $.Values.pluginInstaller.caCertSecret (ne $c.source "file") }}
+            - name: plugin-ca
+              mountPath: /mnt/plugin-ca
+              readOnly: true
+            {{- end }}
         {{- else }}
         # Image form: pre-built plugin OCI image; its entrypoint copies the JAR in.
         - name: {{ $plugin }}
@@ -398,6 +416,18 @@ spec:
           emptyDir: {}
         - name: home-plugins
           emptyDir: {}
+        {{- with .Values.pluginInstaller.caCertSecret }}
+        - name: plugin-ca
+          secret:
+            secretName: {{ . }}
+        {{- end }}
+        {{- range $plugin, $c := .Values.plugins }}
+        {{- if and (eq ($c.source | default "") "file") $c.secret }}
+        - name: plugin-{{ $plugin }}-jar
+          secret:
+            secretName: {{ required (printf "plugins.%s.secret needs a name" $plugin) $c.secret.name }}
+        {{- end }}
+        {{- end }}
         {{- if .Values.metrics.jmx.enabled }}
         - name: jmx-agent
           emptyDir: {}

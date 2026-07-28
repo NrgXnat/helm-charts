@@ -109,3 +109,68 @@ Either or both may contribute; the result is space-joined and may be empty.
 {{- end -}}
 {{- $opts | join " " -}}
 {{- end -}}
+{{/*
+Repository-relative path for a Maven coordinate,
+groupId:artifactId:version[:packaging[:classifier]], e.g.
+  au.edu.qcif.xnat.openid:openid-auth-plugin:1.5.0:jar:xpl
+  -> au/edu/qcif/xnat/openid/openid-auth-plugin/1.5.0/openid-auth-plugin-1.5.0-xpl.jar
+
+Resolved here rather than in the init container so a malformed coordinate fails
+the release instead of the pod. Takes a dict of `coordinates` and `name`.
+*/}}
+{{- define "xnat.mavenArtifactPath" -}}
+{{- $name := .name -}}
+{{- $coord := required (printf "plugins.%s: `coordinates` is required for `source: coordinates`" $name) .coordinates -}}
+{{- $f := splitList ":" $coord -}}
+{{- if or (lt (len $f) 3) (not (index $f 0)) (not (index $f 1)) (not (index $f 2)) -}}
+{{- fail (printf "plugins.%s: coordinates %q -- want groupId:artifactId:version[:packaging[:classifier]]" $name $coord) -}}
+{{- end -}}
+{{- $g := index $f 0 -}}
+{{- $a := index $f 1 -}}
+{{- $v := index $f 2 -}}
+{{- if hasSuffix "-SNAPSHOT" $v -}}
+{{- fail (printf "plugins.%s: coordinates %q -- a snapshot resolves through maven-metadata.xml, which is not supported; pin a release or use `source: url`" $name $coord) -}}
+{{- end -}}
+{{- $pkg := "jar" -}}
+{{- if and (ge (len $f) 4) (index $f 3) -}}{{- $pkg = index $f 3 -}}{{- end -}}
+{{- $cls := "" -}}
+{{- if and (ge (len $f) 5) (index $f 4) -}}{{- $cls = printf "-%s" (index $f 4) -}}{{- end -}}
+{{- printf "%s/%s/%s/%s-%s%s.%s" (replace "." "/" $g) $a $v $a $v $cls $pkg -}}
+{{- end -}}
+
+{{/*
+Where a source-form plugin's jar is fetched from.
+
+`source: url` -- the declared url, rewritten onto pluginRepository.baseUrl when it
+begins with pluginRepository.matchPrefix, with the rest of the path preserved (the
+layout a Nexus `raw` proxy of the upstream host serves). A url that does not match
+the prefix is used as written, so a plugin published elsewhere is never silently
+redirected into the mirror.
+
+`source: coordinates` -- pluginRepository.mavenUrl plus the coordinate's
+repository-relative path. Pointing mavenUrl at a proxy or group redirects every
+coordinate plugin at once, which is what an air-gapped deploy changes.
+
+Resolving both here means the exact url is visible in the rendered manifest, so
+diagnosing a mirror is reading `helm template` rather than pod logs.
+
+Takes a dict of `plugin` (the entry), `name` and `repo` (the pluginRepository map).
+*/}}
+{{- define "xnat.pluginArtifactUrl" -}}
+{{- $c := .plugin -}}
+{{- $name := .name -}}
+{{- $repo := .repo | default dict -}}
+{{- if eq $c.source "coordinates" -}}
+{{- $base := required (printf "plugins.%s: needs a repository -- set pluginRepository.mavenUrl, or plugins.%s.mavenUrl when this plugin lives somewhere else" $name $name) ($c.mavenUrl | default $repo.mavenUrl) -}}
+{{- printf "%s/%s" (trimSuffix "/" $base) (include "xnat.mavenArtifactPath" (dict "coordinates" $c.coordinates "name" $name)) -}}
+{{- else -}}
+{{- $url := required (printf "plugins.%s: `url` is required for `source: url`" $name) $c.url -}}
+{{- $b := $repo.baseUrl | default "" -}}
+{{- $p := $repo.matchPrefix | default "" -}}
+{{- if and $b $p (hasPrefix $p $url) -}}
+{{- printf "%s%s" (trimSuffix "/" $b) (trimPrefix (trimSuffix "/" $p) $url) -}}
+{{- else -}}
+{{- $url -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

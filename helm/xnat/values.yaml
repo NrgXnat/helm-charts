@@ -395,20 +395,68 @@ plugins: []
   # Source form — pull a raw JAR via the plugin-installer init container:
   # container-service:
   #  source: coordinates        # url | coordinates | file | s3
-  #  coordinates: org.nrg.xnatx.plugins:container-service:3.8.1:jar:fat  # mvn -Dartifact
+  #  coordinates: org.nrg.xnatx.plugins:container-service:3.8.1:jar:fat
+  #                             # resolved against pluginRepository.mavenUrl
+  #  mavenUrl: ""               # optional; overrides pluginRepository.mavenUrl for
+  #                             #   this plugin, when it lives in its own repository
   #  url: https://.../foo.jar   # for source: url
-  #  file: /mnt/foo/bar.jar     # for source: file
+  #  file: /mnt/foo/bar.jar     # for source: file -- a path already in the pod
+  #  secret:                    # for source: file -- a Secret holding the jar,
+  #    name: xnat-plugin-foo    #   mounted by the chart (use instead of `file`)
+  #    key: plugin.jar
+  #  sha256: ""                 # optional; verified after download and re-checked
+  #                             #   against an installed jar. Release urls and
+  #                             #   repository paths are both mutable, so pin
+  #                             #   anything you need to be reproducible.
   #  target: ""                 # output filename in the plugins dir; default <name>.jar
   # S3 form — `aws s3 cp` a pre-staged JAR using the pod's IRSA role (no installer image):
   # container-service:
   #  source: s3
   #  s3Uri: s3://bucket/key.jar # optional; default s3://<pluginInstaller.s3.bucket>/<prefix>/<target>
   #  target: ""                 # output filename; default <name>.jar
+# Optional mirror for `source: url` plugins above. A plugin url beginning with
+# matchPrefix is rewritten onto baseUrl with the rest of the path preserved, so
+#   https://github.com/NrgXnat/container-service/releases/download/3.8.1/cs.jar
+# with baseUrl https://nexus.example.org/repository/github-raw becomes
+#   https://nexus.example.org/repository/github-raw/NrgXnat/container-service/releases/download/3.8.1/cs.jar
+# which is the path layout a Nexus `raw` proxy of https://github.com/ already
+# serves. Airgapped sites point baseUrl at a `raw` hosted repository seeded with
+# the same jars and leave the plugin list alone.
+#
+# Urls that do not begin with matchPrefix are used as written, so a plugin
+# published elsewhere is never silently redirected into the mirror. Leave baseUrl
+# empty to disable rewriting. Does not affect coordinates/file/s3 sources.
+pluginRepository:
+  baseUrl: ""
+  matchPrefix: "https://github.com"
+  # Repository base that `source: coordinates` plugins resolve against. The
+  # installer turns the coordinate into a repository-relative path and fetches it
+  # from here, so pointing this at a Maven proxy/group redirects every coordinate
+  # plugin at once -- which is what an air-gapped deploy changes. Required when
+  # any plugin uses `source: coordinates`.
+  mavenUrl: ""
+
 # Init-container image that installs source-form (url|coordinates|file) plugins
 # above (the xnat-plugin-installer). Required only when a plugins entry sets
 # `source` to one of those; the deployer supplies the image ref (not defaulted).
 pluginInstaller:
-  image: ""
+  # Image the url/coordinates/file init containers run in. They only curl (or cp)
+  # the jar into the plugins volume and checksum it, so a stock curl image is all
+  # that is needed -- there is no XNAT-specific installer to build. Override to
+  # pin a digest or to name a mirrored ref; air-gapped clusters pull this through
+  # their image proxy like any other image.
+  image: curlimages/curl:8.11.1
+  # Applied to every source-form init container. The installer needs no
+  # capabilities: it writes only to the shared plugins volume.
+  securityContext: {}
+  #  runAsNonRoot: true
+  #  runAsUser: 1000
+  #  allowPrivilegeEscalation: false
+  #  capabilities: {drop: ['ALL']}
+  #  seccompProfile: {type: RuntimeDefault}
+  # Secret with a `ca.crt` key, mounted so the installer trusts a mirror serving
+  # a self-signed certificate. Applies to url and coordinates sources.
+  caCertSecret: ""
   # S3 plugin install via `aws s3 cp` (no custom image) using the pod's IRSA
   # role -- set serviceAccount.annotations."eks.amazonaws.com/role-arn".
   # `image` is a stock AWS CLI image (pin a tag in production). Two modes:
