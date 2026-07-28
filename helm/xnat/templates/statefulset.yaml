@@ -120,6 +120,11 @@ spec:
               subPath: passwd
             - name: tomcat
               mountPath: /usr/local/tomcat
+            {{- if .Values.devWar.enabled }}
+            # Shadows the image's webapps dir with the side-loaded WAR (dev only).
+            - name: webapps
+              mountPath: /usr/local/tomcat/webapps
+            {{- end }}
             - name: conf-catalina
               mountPath: /usr/local/tomcat/conf/Catalina
             - name: xnat-home
@@ -188,18 +193,16 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           command:
             - aws
+            {{- with .Values.pluginInstaller.s3.endpointUrl }}
+            - --endpoint-url
+            - {{ . | quote }}
+            {{- end }}
             - s3
             - cp
             - --recursive
             - {{ printf "s3://%s/%s/" (required "pluginInstaller.s3.bucket is required for syncPrefix" .Values.pluginInstaller.s3.bucket) (trimSuffix "/" (required "pluginInstaller.s3.prefix is required for syncPrefix (an empty prefix would recursively copy the whole bucket into the plugins dir)" .Values.pluginInstaller.s3.prefix)) | quote }}
             - /data/xnat/home/plugins/
-          env:
-            - name: HOME
-              value: /tmp
-            {{- with .Values.pluginInstaller.s3.region }}
-            - name: AWS_REGION
-              value: {{ . | quote }}
-            {{- end }}
+          {{- include "xnat.s3Env" . | nindent 10 }}
           volumeMounts:
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
@@ -217,17 +220,15 @@ spec:
             {{- toYaml $.Values.securityContext | nindent 12 }}
           command:
             - aws
+            {{- with $.Values.pluginInstaller.s3.endpointUrl }}
+            - --endpoint-url
+            - {{ . | quote }}
+            {{- end }}
             - s3
             - cp
             - {{ $c.s3Uri | default (printf "s3://%s/%s/%s" $.Values.pluginInstaller.s3.bucket (trimSuffix "/" $.Values.pluginInstaller.s3.prefix) ($c.target | default (printf "%s.jar" $plugin))) | quote }}
             - {{ printf "/data/xnat/home/plugins/%s" ($c.target | default (printf "%s.jar" $plugin)) | quote }}
-          env:
-            - name: HOME
-              value: /tmp
-            {{- with $.Values.pluginInstaller.s3.region }}
-            - name: AWS_REGION
-              value: {{ . | quote }}
-            {{- end }}
+          {{- include "xnat.s3Env" $ | nindent 10 }}
           volumeMounts:
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
@@ -287,6 +288,35 @@ spec:
               mountPath: /data/xnat/home/plugins
         {{- end }}
         {{- end }}
+        {{- if .Values.devPlugins.enabled }}
+        # DEV/TEST: copy every jar staged under the dev prefix into the plugins
+        # volume. Deliberately rendered after the plugins above so a locally built
+        # jar overrides a declared one of the same name -- that is the point of a
+        # side-load, and it is why this is not pluginInstaller.s3.syncPrefix, which
+        # installs a release set and must not silently outrank a pinned version.
+        - name: dev-plugins
+          image: {{ required "pluginInstaller.s3.image is required when devPlugins.enabled" .Values.pluginInstaller.s3.image }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          {{- with .Values.pluginInstaller.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- include "xnat.s3Env" . | nindent 10 }}
+          command:
+            - aws
+            {{- with .Values.pluginInstaller.s3.endpointUrl }}
+            - --endpoint-url
+            - {{ . | quote }}
+            {{- end }}
+            - s3
+            - cp
+            - --recursive
+            - {{ required "devPlugins.s3Uri is required when devPlugins.enabled (e.g. s3://bucket/dev/plugins/)" .Values.devPlugins.s3Uri | quote }}
+            - /data/xnat/home/plugins/
+          volumeMounts:
+            - name: home-plugins
+              mountPath: /data/xnat/home/plugins
+        {{- end }}
         {{- if .Values.activemq.broker.enabled }}
         - name: wait-for-amq
           image: busybox:1.36
@@ -317,6 +347,50 @@ spec:
         {{- with .Values.initContainers }}
         {{- . | toYaml | nindent 8 }}
         {{- end }}
+        {{- end }}
+        {{- if .Values.devWar.enabled }}
+        {{- $w := .Values.devWar }}
+        # DEV/TEST: fetch a WAR into the `webapps` volume, which the main
+        # container mounts over /usr/local/tomcat/webapps. Deliberately a separate
+        # volume: home-init seeds the `tomcat` volume from the image and runs
+        # after this, so a WAR written there would be overwritten.
+        - name: dev-war
+          {{- if eq $w.source "s3" }}
+          image: {{ required "pluginInstaller.s3.image is required when devWar.source is s3" .Values.pluginInstaller.s3.image }}
+          {{- else }}
+          image: {{ .Values.pluginInstaller.image | quote }}
+          {{- end }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          {{- with .Values.pluginInstaller.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if eq $w.source "s3" }}
+          {{- include "xnat.s3Env" . | nindent 10 }}
+          {{- end }}
+          command: ['sh', '-c']
+          args:
+            - |
+              set -eu
+              {{- if eq $w.source "s3" }}
+              aws{{ with .Values.pluginInstaller.s3.endpointUrl }} --endpoint-url {{ . | quote }}{{ end }} s3 cp {{ required "devWar.s3Uri is required when devWar.source is s3" $w.s3Uri | quote }} "/webapps/ROOT.war.part"
+              {{- else if eq $w.source "file" }}
+              cp {{ required "devWar.file is required when devWar.source is file" $w.file | quote }} "/webapps/ROOT.war.part"
+              {{- else }}
+              curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused{{ if .Values.pluginInstaller.caCertSecret }} --cacert /mnt/plugin-ca/ca.crt{{ end }} -o "/webapps/ROOT.war.part" {{ required "devWar.url is required when devWar.source is url" $w.url | quote }}
+              {{- end }}
+              {{- with $w.sha256 }}
+              echo {{ . | quote }}"  /webapps/ROOT.war.part" | sha256sum -c -
+              {{- end }}
+              mv "/webapps/ROOT.war.part" "/webapps/ROOT.war"
+          volumeMounts:
+            - name: webapps
+              mountPath: /webapps
+            {{- if and .Values.pluginInstaller.caCertSecret (eq $w.source "url") }}
+            - name: plugin-ca
+              mountPath: /mnt/plugin-ca
+              readOnly: true
+            {{- end }}
         {{- end }}
         - name: home-init
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -416,6 +490,10 @@ spec:
           emptyDir: {}
         - name: home-plugins
           emptyDir: {}
+        {{- if .Values.devWar.enabled }}
+        - name: webapps
+          emptyDir: {}
+        {{- end }}
         {{- with .Values.pluginInstaller.caCertSecret }}
         - name: plugin-ca
           secret:

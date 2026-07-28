@@ -471,6 +471,58 @@ pluginInstaller:
     prefix: ""
     region: ""
     syncPrefix: false
+    # Any S3-compatible store (MinIO, Ceph, ...) rather than AWS. With
+    # endpointUrl empty the CLI talks to AWS and authenticates with the pod's
+    # IRSA role, as before.
+    endpointUrl: ""
+    # Secret supplying static credentials, for a store that has no IRSA. Its keys
+    # are passed through as environment variables, so it needs AWS_ACCESS_KEY_ID
+    # and AWS_SECRET_ACCESS_KEY (a Secret keyed differently can be remapped with
+    # secretKeys below).
+    existingSecret: ""
+    # Optional: map a differently-keyed Secret onto the AWS variable names, e.g.
+    #   secretKeys: {accessKeyId: S3_USER, secretAccessKey: S3_PASS}
+    secretKeys: {}
+# DEVELOPMENT AND TESTING ONLY: side-load locally built plugin jars.
+#
+# Every jar under s3Uri is copied into the plugins directory *after* the `plugins`
+# entries above, so a jar staged here overrides a declared plugin of the same
+# filename -- which is the point of a side-load. That ordering is why this is a
+# separate value from pluginInstaller.s3.syncPrefix: syncPrefix installs a release
+# set and runs first, so it can never silently outrank a pinned per-plugin
+# version.
+#
+# Uses the pluginInstaller.s3 settings (image, endpointUrl, credentials, region).
+devPlugins:
+  enabled: false
+  # e.g. s3://my-dev-bucket/plugins/ -- a prefix, not a single object
+  s3Uri: ""
+
+# DEVELOPMENT AND TESTING ONLY: run a WAR other than the one in the image.
+#
+# An init container fetches the WAR into a volume mounted over Tomcat's webapps
+# directory, so it shadows whatever the image ships. It has to work that way:
+# home-init seeds the `tomcat` volume from the image (`cp -r /usr/local/tomcat/*`)
+# and runs last, so a WAR written into that volume is overwritten before Tomcat
+# ever sees it.
+#
+# This bypasses the image as the unit of deployment -- the WAR is assembled into
+# the pod at start-up and is not what was built, scanned or tagged. Use it to test
+# an unreleased build against a real deployment; ship a real image for anything
+# that matters.
+devWar:
+  enabled: false
+  # url | s3 | file
+  source: url
+  url: ""
+  # for source: s3 -- uses the pluginInstaller.s3 settings (image, endpointUrl,
+  # credentials, region)
+  s3Uri: ""
+  # for source: file -- a path already present in the pod
+  file: ""
+  # Optional, and worth setting: nothing else validates a side-loaded WAR.
+  sha256: ""
+
 containerService: false
 namespace: ""
 authplugins: []

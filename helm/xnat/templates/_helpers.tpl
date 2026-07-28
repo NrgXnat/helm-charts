@@ -174,3 +174,39 @@ Takes a dict of `plugin` (the entry), `name` and `repo` (the pluginRepository ma
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Credentials/region environment for an AWS-CLI init container.
+
+With s3.existingSecret unset the CLI authenticates with the pod's IRSA role, as
+it always has. When set, its keys are passed through as environment variables --
+either wholesale via envFrom, or remapped onto the AWS names when s3.secretKeys
+names a differently-keyed Secret (e.g. MinIO's S3_USER / S3_PASS).
+*/}}
+{{- define "xnat.s3Env" -}}
+{{- $s3 := .Values.pluginInstaller.s3 -}}
+env:
+  - name: HOME
+    value: /tmp
+  {{- with $s3.region }}
+  - name: AWS_REGION
+    value: {{ . | quote }}
+  {{- end }}
+  {{- if and $s3.existingSecret $s3.secretKeys.accessKeyId }}
+  - name: AWS_ACCESS_KEY_ID
+    valueFrom:
+      secretKeyRef:
+        name: {{ $s3.existingSecret }}
+        key: {{ $s3.secretKeys.accessKeyId }}
+  - name: AWS_SECRET_ACCESS_KEY
+    valueFrom:
+      secretKeyRef:
+        name: {{ $s3.existingSecret }}
+        key: {{ required "pluginInstaller.s3.secretKeys.secretAccessKey is required alongside accessKeyId" $s3.secretKeys.secretAccessKey }}
+  {{- end }}
+{{- if and $s3.existingSecret (not $s3.secretKeys.accessKeyId) }}
+envFrom:
+  - secretRef:
+      name: {{ $s3.existingSecret }}
+{{- end }}
+{{- end -}}
