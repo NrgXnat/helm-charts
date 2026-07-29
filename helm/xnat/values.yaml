@@ -396,9 +396,18 @@ plugins: []
   # container-service:
   #  source: coordinates        # url | coordinates | file | s3
   #  coordinates: org.nrg.xnatx.plugins:container-service:3.8.1:jar:fat
-  #                             # resolved against pluginRepository.mavenUrl
+  #                             # resolved against pluginRepository.mavenUrl.
+  #                             #   A -SNAPSHOT version is supported: its filename
+  #                             #   is timestamped, so the init container reads
+  #                             #   maven-metadata.xml to resolve it at start-up
+  #                             #   rather than the chart resolving it at render
+  #                             #   time. Two consequences: the exact url is not
+  #                             #   visible in the rendered manifest, and a pod
+  #                             #   restart may pick up a newer build -- so don't
+  #                             #   pair a snapshot with sha256 below.
   #  mavenUrl: ""               # optional; overrides pluginRepository.mavenUrl for
   #                             #   this plugin, when it lives in its own repository
+  #                             #   (e.g. a snapshot repo, or a group serving both)
   #  url: https://.../foo.jar   # for source: url
   #  file: /mnt/foo/bar.jar     # for source: file -- a path already in the pod
   #  secret:                    # for source: file -- a Secret holding the jar,
@@ -407,7 +416,9 @@ plugins: []
   #  sha256: ""                 # optional; verified after download and re-checked
   #                             #   against an installed jar. Release urls and
   #                             #   repository paths are both mutable, so pin
-  #                             #   anything you need to be reproducible.
+  #                             #   anything you need to be reproducible. Not for
+  #                             #   a -SNAPSHOT coordinate, which is expected to
+  #                             #   change underneath you.
   #  target: ""                 # output filename in the plugins dir; default <name>.jar
   # S3 form — `aws s3 cp` a pre-staged JAR using the pod's IRSA role (no installer image):
   # container-service:

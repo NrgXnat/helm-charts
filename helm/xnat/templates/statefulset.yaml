@@ -238,12 +238,11 @@ spec:
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
         {{- else if $c.source }}
-        {{- $target := printf "/data/xnat/home/plugins/%s" ($c.target | default (printf "%s.jar" $plugin)) }}
         # Source form: fetch a raw JAR (url|coordinates|file) into the shared
-        # home-plugins volume. The url is resolved at render time (see
-        # xnat.pluginArtifactUrl), so the container only has to fetch it -- no
-        # custom installer image, same as the s3 form above. Written to .part and
-        # moved into place last, so a failed checksum never leaves a jar behind.
+        # home-plugins volume, on a stock curl image -- no custom installer image,
+        # same as the s3 form above. Release coordinates and urls are resolved at
+        # render time so the fetched url is visible here; a -SNAPSHOT coordinate
+        # resolves through maven-metadata.xml at runtime (see xnat.pluginFetch).
         - name: {{ $plugin }}
           image: {{ $.Values.pluginInstaller.image | quote }}
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
@@ -254,22 +253,7 @@ spec:
           command: ['sh', '-c']
           args:
             - |
-              set -eu
-              {{- if eq $c.source "file" }}
-              {{- $src := "" }}
-              {{- if $c.secret }}
-              {{- $src = printf "/mnt/plugin-%s/%s" $plugin ($c.secret.key | default "plugin.jar") }}
-              {{- else }}
-              {{- $src = required (printf "plugins.%s needs `file` (a path) or `secret` (name/key) for `source: file`" $plugin) $c.file }}
-              {{- end }}
-              cp {{ $src | quote }} {{ printf "%s.part" $target | quote }}
-              {{- else }}
-              curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused{{ if $.Values.pluginInstaller.caCertSecret }} --cacert /mnt/plugin-ca/ca.crt{{ end }} -o {{ printf "%s.part" $target | quote }} {{ include "xnat.pluginArtifactUrl" (dict "plugin" $c "name" $plugin "repo" $.Values.pluginRepository) | quote }}
-              {{- end }}
-              {{- with $c.sha256 }}
-              echo {{ . | quote }}{{ printf "  %s.part" $target | quote }} | sha256sum -c -
-              {{- end }}
-              mv {{ printf "%s.part" $target | quote }} {{ $target | quote }}
+              {{- include "xnat.pluginFetch" (dict "plugin" $c "name" $plugin "repo" $.Values.pluginRepository "caCert" (and $.Values.pluginInstaller.caCertSecret (ne $c.source "file"))) | nindent 14 }}
           volumeMounts:
             - name: home-plugins
               mountPath: /data/xnat/home/plugins

@@ -110,36 +110,53 @@ Either or both may contribute; the result is space-joined and may be empty.
 {{- $opts | join " " -}}
 {{- end -}}
 {{/*
-Repository-relative path for a Maven coordinate,
-groupId:artifactId:version[:packaging[:classifier]], e.g.
-  au.edu.qcif.xnat.openid:openid-auth-plugin:1.5.0:jar:xpl
-  -> au/edu/qcif/xnat/openid/openid-auth-plugin/1.5.0/openid-auth-plugin-1.5.0-xpl.jar
-
-Resolved here rather than in the init container so a malformed coordinate fails
-the release instead of the pod. Takes a dict of `coordinates` and `name`.
+Validated parts of a Maven coordinate, groupId:artifactId:version[:packaging[:classifier]],
+emitted space-separated as "group artifact version packaging classifier". packaging
+defaults to jar; an absent classifier is emitted as "-" so callers always get five
+fields. Takes a dict of `coordinates` and `name`.
 */}}
-{{- define "xnat.mavenArtifactPath" -}}
+{{- define "xnat.mavenCoordParts" -}}
 {{- $name := .name -}}
 {{- $coord := required (printf "plugins.%s: `coordinates` is required for `source: coordinates`" $name) .coordinates -}}
 {{- $f := splitList ":" $coord -}}
 {{- if or (lt (len $f) 3) (not (index $f 0)) (not (index $f 1)) (not (index $f 2)) -}}
 {{- fail (printf "plugins.%s: coordinates %q -- want groupId:artifactId:version[:packaging[:classifier]]" $name $coord) -}}
 {{- end -}}
-{{- $g := index $f 0 -}}
-{{- $a := index $f 1 -}}
-{{- $v := index $f 2 -}}
-{{- if hasSuffix "-SNAPSHOT" $v -}}
-{{- fail (printf "plugins.%s: coordinates %q -- a snapshot resolves through maven-metadata.xml, which is not supported; pin a release or use `source: url`" $name $coord) -}}
-{{- end -}}
 {{- $pkg := "jar" -}}
 {{- if and (ge (len $f) 4) (index $f 3) -}}{{- $pkg = index $f 3 -}}{{- end -}}
-{{- $cls := "" -}}
-{{- if and (ge (len $f) 5) (index $f 4) -}}{{- $cls = printf "-%s" (index $f 4) -}}{{- end -}}
-{{- printf "%s/%s/%s/%s-%s%s.%s" (replace "." "/" $g) $a $v $a $v $cls $pkg -}}
+{{- $cls := "-" -}}
+{{- if and (ge (len $f) 5) (index $f 4) -}}{{- $cls = index $f 4 -}}{{- end -}}
+{{- printf "%s %s %s %s %s" (index $f 0) (index $f 1) (index $f 2) $pkg $cls -}}
 {{- end -}}
 
 {{/*
-Where a source-form plugin's jar is fetched from.
+Repository-relative path for a *release* Maven coordinate, e.g.
+  au.edu.qcif.xnat.openid:openid-auth-plugin:1.5.0:jar:xpl
+  -> au/edu/qcif/xnat/openid/openid-auth-plugin/1.5.0/openid-auth-plugin-1.5.0-xpl.jar
+
+A -SNAPSHOT has no render-time path: its filename is timestamped and only
+maven-metadata.xml knows it, so those resolve in the init container instead (see
+xnat.pluginFetch). Takes a dict of `coordinates` and `name`.
+*/}}
+{{- define "xnat.mavenArtifactPath" -}}
+{{- $p := splitList " " (include "xnat.mavenCoordParts" .) -}}
+{{- $g := index $p 0 -}}{{- $a := index $p 1 -}}{{- $v := index $p 2 -}}
+{{- $pkg := index $p 3 -}}{{- $cls := index $p 4 -}}
+{{- $sfx := "" -}}{{- if ne $cls "-" -}}{{- $sfx = printf "-%s" $cls -}}{{- end -}}
+{{- printf "%s/%s/%s/%s-%s%s.%s" (replace "." "/" $g) $a $v $a $v $sfx $pkg -}}
+{{- end -}}
+
+{{/*
+Whether a coordinates plugin names a snapshot. Snapshots resolve at runtime.
+Takes a dict of `coordinates` and `name`.
+*/}}
+{{- define "xnat.isSnapshot" -}}
+{{- if hasSuffix "-SNAPSHOT" (index (splitList " " (include "xnat.mavenCoordParts" .)) 2) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Where a source-form plugin's jar is fetched from, for the cases resolvable at
+render time (`source: url`, and a release `source: coordinates`).
 
 `source: url` -- the declared url, rewritten onto pluginRepository.baseUrl when it
 begins with pluginRepository.matchPrefix, with the rest of the path preserved (the
@@ -147,12 +164,12 @@ layout a Nexus `raw` proxy of the upstream host serves). A url that does not mat
 the prefix is used as written, so a plugin published elsewhere is never silently
 redirected into the mirror.
 
-`source: coordinates` -- pluginRepository.mavenUrl plus the coordinate's
-repository-relative path. Pointing mavenUrl at a proxy or group redirects every
+`source: coordinates` -- the repository base plus the coordinate's
+repository-relative path. Pointing the base at a proxy or group redirects every
 coordinate plugin at once, which is what an air-gapped deploy changes.
 
-Resolving both here means the exact url is visible in the rendered manifest, so
-diagnosing a mirror is reading `helm template` rather than pod logs.
+Resolving here means the exact url is visible in the rendered manifest. A snapshot
+coordinate is the exception -- see xnat.pluginFetch.
 
 Takes a dict of `plugin` (the entry), `name` and `repo` (the pluginRepository map).
 */}}
@@ -161,8 +178,7 @@ Takes a dict of `plugin` (the entry), `name` and `repo` (the pluginRepository ma
 {{- $name := .name -}}
 {{- $repo := .repo | default dict -}}
 {{- if eq $c.source "coordinates" -}}
-{{- $base := required (printf "plugins.%s: needs a repository -- set pluginRepository.mavenUrl, or plugins.%s.mavenUrl when this plugin lives somewhere else" $name $name) ($c.mavenUrl | default $repo.mavenUrl) -}}
-{{- printf "%s/%s" (trimSuffix "/" $base) (include "xnat.mavenArtifactPath" (dict "coordinates" $c.coordinates "name" $name)) -}}
+{{- printf "%s/%s" (trimSuffix "/" (include "xnat.pluginMavenBase" .)) (include "xnat.mavenArtifactPath" (dict "coordinates" $c.coordinates "name" $name)) -}}
 {{- else -}}
 {{- $url := required (printf "plugins.%s: `url` is required for `source: url`" $name) $c.url -}}
 {{- $b := $repo.baseUrl | default "" -}}
@@ -173,6 +189,15 @@ Takes a dict of `plugin` (the entry), `name` and `repo` (the pluginRepository ma
 {{- $url -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Repository a coordinates plugin resolves against: its own mavenUrl when set,
+otherwise pluginRepository.mavenUrl. Same dict as xnat.pluginArtifactUrl.
+*/}}
+{{- define "xnat.pluginMavenBase" -}}
+{{- $name := .name -}}
+{{- required (printf "plugins.%s: needs a repository -- set pluginRepository.mavenUrl, or plugins.%s.mavenUrl when this plugin lives somewhere else" $name $name) (.plugin.mavenUrl | default (.repo | default dict).mavenUrl) -}}
 {{- end -}}
 
 {{/*
@@ -209,4 +234,67 @@ envFrom:
   - secretRef:
       name: {{ $s3.existingSecret }}
 {{- end }}
+{{- end -}}
+
+{{/*
+Shell body for a source-form plugin's init container. Fetches the jar to
+<target>.part, optionally checksums it, then moves it into place, so a failed
+fetch or checksum never leaves a jar behind.
+
+A release coordinate and a url are resolved by the chart, so the container just
+fetches a literal url. A -SNAPSHOT coordinate cannot be: its filename carries a
+deploy timestamp and build number that only maven-metadata.xml knows, and helm
+cannot make an HTTP request while rendering. Those do a two-step at runtime --
+fetch the metadata, read the <value> of the <snapshotVersion> matching this
+artifact's extension and classifier, then fetch that. Matching per classifier
+matters: classifiers can sit on different build numbers, so the top-level
+<snapshot><buildNumber> is not reliably the right one.
+
+Takes a dict of `plugin`, `name`, `repo` and `caCert` (bool).
+*/}}
+{{- define "xnat.pluginFetch" -}}
+{{- $c := .plugin -}}
+{{- $name := .name -}}
+{{- $t := printf "/data/xnat/home/plugins/%s" ($c.target | default (printf "%s.jar" $name)) -}}
+{{- $part := printf "%s.part" $t -}}
+{{- $curl := "curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused" -}}
+{{- if .caCert -}}{{- $curl = printf "%s --cacert /mnt/plugin-ca/ca.crt" $curl -}}{{- end -}}
+{{- /* Only a coordinates plugin has a version to inspect; computed up front so a
+       url/file plugin never reaches the coordinate parser. */ -}}
+{{- $snap := "" -}}
+{{- if eq $c.source "coordinates" -}}
+{{- $snap = include "xnat.isSnapshot" (dict "coordinates" $c.coordinates "name" $name) -}}
+{{- end -}}
+set -eu
+{{ if eq $c.source "file" -}}
+{{- $src := "" -}}
+{{- if $c.secret -}}
+{{- $src = printf "/mnt/plugin-%s/%s" $name ($c.secret.key | default "plugin.jar") -}}
+{{- else -}}
+{{- $src = required (printf "plugins.%s needs `file` (a path) or `secret` (name/key) for `source: file`" $name) $c.file -}}
+{{- end -}}
+cp {{ $src | quote }} {{ $part | quote }}
+{{- else if eq $snap "true" -}}
+{{- $p := splitList " " (include "xnat.mavenCoordParts" (dict "coordinates" $c.coordinates "name" $name)) -}}
+{{- $a := index $p 1 -}}{{- $pkg := index $p 3 -}}{{- $cls := index $p 4 -}}
+{{- $dir := printf "%s/%s/%s/%s" (trimSuffix "/" (include "xnat.pluginMavenBase" .)) (replace "." "/" (index $p 0)) $a (index $p 2) -}}
+d={{ $dir | quote }}
+{{ $curl }} -o /tmp/maven-metadata.xml "$d/maven-metadata.xml"
+v=$(tr -d '\n\r' < /tmp/maven-metadata.xml | sed 's#</snapshotVersion>#\n#g' \
+  | grep -F {{ printf "<extension>%s</extension>" $pkg | quote }} \
+  {{ if eq $cls "-" }}| grep -v '<classifier>' \{{ else }}| grep -F {{ printf "<classifier>%s</classifier>" $cls | quote }} \{{ end }}
+  | sed -n 's#.*<value>\([^<]*\)</value>.*#\1#p' | head -1)
+if [ -z "$v" ]; then
+  echo "no {{ $pkg }}{{ if ne $cls "-" }} (classifier {{ $cls }}){{ end }} artifact in $d/maven-metadata.xml" >&2
+  exit 1
+fi
+echo "resolved {{ index $p 2 }} -> $v"
+{{ $curl }} -o {{ $part | quote }} "$d/{{ $a }}-$v{{ if ne $cls "-" }}-{{ $cls }}{{ end }}.{{ $pkg }}"
+{{- else -}}
+{{ $curl }} -o {{ $part | quote }} {{ include "xnat.pluginArtifactUrl" (dict "plugin" $c "name" $name "repo" .repo) | quote }}
+{{- end }}
+{{- with $c.sha256 }}
+echo {{ . | quote }}{{ printf "  %s" $part | quote }} | sha256sum -c -
+{{- end }}
+mv {{ $part | quote }} {{ $t | quote }}
 {{- end -}}
