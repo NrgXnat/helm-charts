@@ -100,9 +100,9 @@ activemq:
 replicaCount: 1
 
 image:
-  repository: xnatworks/xnat-web
+  repository: ghcr.io/nrgxnat/xnat-web
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "1.9.2.1"
+  tag: "1.9.3.7"
 imagePullPolicy: IfNotPresent
 
 imagePullSecrets: null

@@ -31,7 +31,7 @@ version: 2.4.0
 # This is the version number of the application being deployed. This version number should be
 # incremented each time you make changes to the application. Versions are not expected to
 # follow Semantic Versioning. They should reflect the version the application is using.
-appVersion: 1.9.2.1
+appVersion: 1.9.3.7
 
 # In addition to the following helm dependencies, this chart requires these operators to be pre-installed:
 #
