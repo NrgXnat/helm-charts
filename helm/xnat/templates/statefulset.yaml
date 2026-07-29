@@ -318,6 +318,8 @@ spec:
         {{- end }}
         - name: wait-for-postgres
           image: busybox:1.36
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
           command:
             - 'sh'
             - '-c'
@@ -378,6 +380,12 @@ spec:
         - name: home-init
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
+          # Same securityContext as the main container. The chown below is guarded
+          # on `id -u`, so pinning a uid here just takes the non-root branch; a
+          # root-USER image needs .Values.securityContext relaxed, which such an
+          # image already requires for the main container.
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
           command:
             - 'bash'
             - '-c'
