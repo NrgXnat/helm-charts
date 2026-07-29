@@ -387,7 +387,7 @@ createConfigSecret: true
 # SOURCE form (url|coordinates|file, via the plugin-installer init container),
 # or S3 form (a pre-staged JAR copied with the AWS CLI). All render from this
 # one map; pick per plugin.
-plugins: []
+plugins: {}
   # Image form — pre-built plugin OCI image (its entrypoint copies the JAR in):
   # container-service:
   #  repository: radiologicsit/container-service
@@ -413,8 +413,9 @@ plugins: []
   #  secret:                    # for source: file -- a Secret holding the jar,
   #    name: xnat-plugin-foo    #   mounted by the chart (use instead of `file`)
   #    key: plugin.jar
-  #  sha256: ""                 # optional; verified after download and re-checked
-  #                             #   against an installed jar. Release urls and
+  #  sha256: ""                 # optional; the fetched bytes are verified before the
+  #                             #   jar is moved into place, so a mismatch fails the
+  #                             #   pod rather than installing it. Release urls and
   #                             #   repository paths are both mutable, so pin
   #                             #   anything you need to be reproducible. Not for
   #                             #   a -SNAPSHOT coordinate, which is expected to
@@ -439,7 +440,11 @@ plugins: []
 # empty to disable rewriting. Does not affect coordinates/file/s3 sources.
 pluginRepository:
   baseUrl: ""
-  matchPrefix: "https://github.com"
+  # Keep the trailing slash: it pins the match to a host boundary. Without it
+  # "https://github.com" also prefix-matches a lookalike host such as
+  # "https://github.com.example.org/...", which would then be rewritten into the
+  # mirror. A prefix naming a path (".../NrgXnat") is matched as written.
+  matchPrefix: "https://github.com/"
   # Repository base that `source: coordinates` plugins resolve against. The
   # installer turns the coordinate into a repository-relative path and fetches it
   # from here, so pointing this at a Maven proxy/group redirects every coordinate
@@ -475,7 +480,7 @@ pluginInstaller:
   #     s3://<bucket>/<prefix>/<target>, or per-plugin s3Uri).
   #   - syncPrefix: true -> ONE init container copies the whole
   #     s3://<bucket>/<prefix>/ tree into the plugins dir. The plugin set is
-  #     whatever is staged there -- no per-plugin list (leave plugins: []).
+  #     whatever is staged there -- no per-plugin list (leave plugins: {}).
   s3:
     image: public.ecr.aws/aws-cli/aws-cli:latest
     bucket: ""

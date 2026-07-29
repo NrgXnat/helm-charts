@@ -246,10 +246,8 @@ spec:
         - name: {{ $plugin }}
           image: {{ $.Values.pluginInstaller.image | quote }}
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
-          {{- with $.Values.pluginInstaller.securityContext }}
           securityContext:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- include "xnat.installerSecurityContext" $ | nindent 12 }}
           command: ['sh', '-c']
           args:
             - |
@@ -270,7 +268,7 @@ spec:
         {{- else }}
         # Image form: pre-built plugin OCI image; its entrypoint copies the JAR in.
         - name: {{ $plugin }}
-          image: "{{ $c.repository }}:{{ $c.tag }}"
+          image: "{{ required (printf "plugins.%s: `repository` is required for the image form (or set `source`)" $plugin) $c.repository }}:{{ required (printf "plugins.%s: `tag` is required for the image form" $plugin) $c.tag }}"
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
           volumeMounts:
             - name: home-plugins
@@ -286,10 +284,8 @@ spec:
         - name: dev-plugins
           image: {{ required "pluginInstaller.s3.image is required when devPlugins.enabled" .Values.pluginInstaller.s3.image }}
           imagePullPolicy: {{ .Values.imagePullPolicy }}
-          {{- with .Values.pluginInstaller.securityContext }}
           securityContext:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- include "xnat.installerSecurityContext" . | nindent 12 }}
           {{- include "xnat.s3Env" . | nindent 10 }}
           command:
             - aws
@@ -350,10 +346,8 @@ spec:
           image: {{ .Values.pluginInstaller.image | quote }}
           {{- end }}
           imagePullPolicy: {{ .Values.imagePullPolicy }}
-          {{- with .Values.pluginInstaller.securityContext }}
           securityContext:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- include "xnat.installerSecurityContext" . | nindent 12 }}
           {{- if eq $w.source "s3" }}
           {{- include "xnat.s3Env" . | nindent 10 }}
           {{- end }}

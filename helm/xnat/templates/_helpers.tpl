@@ -298,3 +298,15 @@ echo {{ . | quote }}{{ printf "  %s" $part | quote }} | sha256sum -c -
 {{- end }}
 mv {{ $part | quote }} {{ $t | quote }}
 {{- end -}}
+
+{{/*
+securityContext for the plugin/dev init containers. Defaults to the main
+container's .Values.securityContext so they are hardened consistently with the
+rest of the pod -- an unset one would render nothing and be rejected on its own
+by a namespace enforcing the restricted Pod Security Standard, while the s3
+containers (which use .Values.securityContext directly) passed.
+Override via pluginInstaller.securityContext.
+*/}}
+{{- define "xnat.installerSecurityContext" -}}
+{{- toYaml (default .Values.securityContext .Values.pluginInstaller.securityContext) -}}
+{{- end -}}
