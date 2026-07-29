@@ -195,7 +195,7 @@ spec:
           image: {{ required "pluginInstaller.s3.image is required when pluginInstaller.s3.syncPrefix is set" .Values.pluginInstaller.s3.image }}
           imagePullPolicy: {{ .Values.imagePullPolicy }}
           securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
+            {{- include "xnat.installerSecurityContext" . | nindent 12 }}
           command:
             - aws
             {{- with .Values.pluginInstaller.s3.endpointUrl }}
@@ -222,7 +222,7 @@ spec:
           image: {{ required "pluginInstaller.s3.image is required when a plugins entry sets source: s3" $.Values.pluginInstaller.s3.image }}
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
           securityContext:
-            {{- toYaml $.Values.securityContext | nindent 12 }}
+            {{- include "xnat.installerSecurityContext" $ | nindent 12 }}
           command:
             - aws
             {{- with $.Values.pluginInstaller.s3.endpointUrl }}
