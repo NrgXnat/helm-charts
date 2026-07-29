@@ -100,9 +100,9 @@ activemq:
 replicaCount: 1
 
 image:
-  repository: xnatworks/xnat-web
+  repository: ghcr.io/nrgxnat/xnat-web
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "1.9.2.1"
+  tag: "1.9.3.7"
 imagePullPolicy: IfNotPresent
 
 imagePullSecrets: null
@@ -387,7 +387,7 @@ createConfigSecret: true
 # SOURCE form (url|coordinates|file, via the plugin-installer init container),
 # or S3 form (a pre-staged JAR copied with the AWS CLI). All render from this
 # one map; pick per plugin.
-plugins: []
+plugins: {}
   # Image form — pre-built plugin OCI image (its entrypoint copies the JAR in):
   # container-service:
   #  repository: radiologicsit/container-service
@@ -395,20 +395,86 @@ plugins: []
   # Source form — pull a raw JAR via the plugin-installer init container:
   # container-service:
   #  source: coordinates        # url | coordinates | file | s3
-  #  coordinates: org.nrg.xnatx.plugins:container-service:3.8.1:jar:fat  # mvn -Dartifact
+  #  coordinates: org.nrg.xnatx.plugins:container-service:3.8.1:jar:fat
+  #                             # resolved against pluginRepository.mavenUrl.
+  #                             #   RELEASE VERSIONS ONLY -- a -SNAPSHOT is
+  #                             #   rejected while rendering. A snapshot's filename
+  #                             #   carries the deploy timestamp and build number,
+  #                             #   which only maven-metadata.xml knows, and the
+  #                             #   chart resolves coordinates with no network
+  #                             #   access. That is the tradeoff that puts the exact
+  #                             #   url in the rendered manifest and keeps the init
+  #                             #   container a plain fetch.
+  #                             #   For a snapshot: name it directly with
+  #                             #   `source: url` (the timestamped filename), or
+  #                             #   stage the jar and use `source: s3`,
+  #                             #   `source: file` or `devPlugins` -- which is what
+  #                             #   a dev side-load does anyway.
+  #  mavenUrl: ""               # optional; overrides pluginRepository.mavenUrl for
+  #                             #   this plugin, when it lives in its own repository
   #  url: https://.../foo.jar   # for source: url
-  #  file: /mnt/foo/bar.jar     # for source: file
+  #  file: /mnt/foo/bar.jar     # for source: file -- a path already in the pod
+  #  secret:                    # for source: file -- a Secret holding the jar,
+  #    name: xnat-plugin-foo    #   mounted by the chart (use instead of `file`)
+  #    key: plugin.jar
+  #  sha256: ""                 # optional; the fetched bytes are verified before the
+  #                             #   jar is moved into place, so a mismatch fails the
+  #                             #   pod rather than installing it. Release urls and
+  #                             #   repository paths are both mutable, so pin
+  #                             #   anything you need to be reproducible.
   #  target: ""                 # output filename in the plugins dir; default <name>.jar
   # S3 form — `aws s3 cp` a pre-staged JAR using the pod's IRSA role (no installer image):
   # container-service:
   #  source: s3
   #  s3Uri: s3://bucket/key.jar # optional; default s3://<pluginInstaller.s3.bucket>/<prefix>/<target>
   #  target: ""                 # output filename; default <name>.jar
+# Optional mirror for `source: url` plugins above. A plugin url beginning with
+# matchPrefix is rewritten onto baseUrl with the rest of the path preserved, so
+#   https://github.com/NrgXnat/container-service/releases/download/3.8.1/cs.jar
+# with baseUrl https://nexus.example.org/repository/github-raw becomes
+#   https://nexus.example.org/repository/github-raw/NrgXnat/container-service/releases/download/3.8.1/cs.jar
+# which is the path layout a Nexus `raw` proxy of https://github.com/ already
+# serves. Airgapped sites point baseUrl at a `raw` hosted repository seeded with
+# the same jars and leave the plugin list alone.
+#
+# Urls that do not begin with matchPrefix are used as written, so a plugin
+# published elsewhere is never silently redirected into the mirror. Leave baseUrl
+# empty to disable rewriting. Does not affect coordinates/file/s3 sources.
+pluginRepository:
+  baseUrl: ""
+  # Keep the trailing slash: it pins the match to a host boundary. Without it
+  # "https://github.com" also prefix-matches a lookalike host such as
+  # "https://github.com.example.org/...", which would then be rewritten into the
+  # mirror. A prefix naming a path (".../NrgXnat") is matched as written.
+  matchPrefix: "https://github.com/"
+  # Repository base that `source: coordinates` plugins resolve against. The
+  # installer turns the coordinate into a repository-relative path and fetches it
+  # from here, so pointing this at a Maven proxy/group redirects every coordinate
+  # plugin at once -- which is what an air-gapped deploy changes. Required when
+  # any plugin uses `source: coordinates`.
+  mavenUrl: ""
+
 # Init-container image that installs source-form (url|coordinates|file) plugins
 # above (the xnat-plugin-installer). Required only when a plugins entry sets
 # `source` to one of those; the deployer supplies the image ref (not defaulted).
 pluginInstaller:
-  image: ""
+  # Image the url/coordinates/file init containers run in. They only curl (or cp)
+  # the jar into the plugins volume and checksum it, so a stock curl image is all
+  # that is needed -- there is no XNAT-specific installer to build. Override to
+  # pin a digest or to name a mirrored ref; air-gapped clusters pull this through
+  # their image proxy like any other image.
+  image: curlimages/curl:8.11.1
+  # Applied to every source-form init container. The installer needs no
+  # capabilities: it writes only to the shared plugins volume.
+  securityContext: {}
+  #  runAsNonRoot: true
+  #  runAsUser: 1000
+  #  allowPrivilegeEscalation: false
+  #  capabilities: {drop: ['ALL']}
+  #  seccompProfile: {type: RuntimeDefault}
+  # Secret with a `ca.crt` key, mounted so the installer trusts a mirror serving
+  # a self-signed certificate. Applies to url and coordinates sources.
+  caCertSecret: ""
   # S3 plugin install via `aws s3 cp` (no custom image) using the pod's IRSA
   # role -- set serviceAccount.annotations."eks.amazonaws.com/role-arn".
   # `image` is a stock AWS CLI image (pin a tag in production). Two modes:
@@ -416,13 +482,65 @@ pluginInstaller:
   #     s3://<bucket>/<prefix>/<target>, or per-plugin s3Uri).
   #   - syncPrefix: true -> ONE init container copies the whole
   #     s3://<bucket>/<prefix>/ tree into the plugins dir. The plugin set is
-  #     whatever is staged there -- no per-plugin list (leave plugins: []).
+  #     whatever is staged there -- no per-plugin list (leave plugins: {}).
   s3:
     image: public.ecr.aws/aws-cli/aws-cli:latest
     bucket: ""
     prefix: ""
     region: ""
     syncPrefix: false
+    # Any S3-compatible store (MinIO, Ceph, ...) rather than AWS. With
+    # endpointUrl empty the CLI talks to AWS and authenticates with the pod's
+    # IRSA role, as before.
+    endpointUrl: ""
+    # Secret supplying static credentials, for a store that has no IRSA. Its keys
+    # are passed through as environment variables, so it needs AWS_ACCESS_KEY_ID
+    # and AWS_SECRET_ACCESS_KEY (a Secret keyed differently can be remapped with
+    # secretKeys below).
+    existingSecret: ""
+    # Optional: map a differently-keyed Secret onto the AWS variable names, e.g.
+    #   secretKeys: {accessKeyId: S3_USER, secretAccessKey: S3_PASS}
+    secretKeys: {}
+# DEVELOPMENT AND TESTING ONLY: side-load locally built plugin jars.
+#
+# Every jar under s3Uri is copied into the plugins directory *after* the `plugins`
+# entries above, so a jar staged here overrides a declared plugin of the same
+# filename -- which is the point of a side-load. That ordering is why this is a
+# separate value from pluginInstaller.s3.syncPrefix: syncPrefix installs a release
+# set and runs first, so it can never silently outrank a pinned per-plugin
+# version.
+#
+# Uses the pluginInstaller.s3 settings (image, endpointUrl, credentials, region).
+devPlugins:
+  enabled: false
+  # e.g. s3://my-dev-bucket/plugins/ -- a prefix, not a single object
+  s3Uri: ""
+
+# DEVELOPMENT AND TESTING ONLY: run a WAR other than the one in the image.
+#
+# An init container fetches the WAR into a volume mounted over Tomcat's webapps
+# directory, so it shadows whatever the image ships. It has to work that way:
+# home-init seeds the `tomcat` volume from the image (`cp -r /usr/local/tomcat/*`)
+# and runs last, so a WAR written into that volume is overwritten before Tomcat
+# ever sees it.
+#
+# This bypasses the image as the unit of deployment -- the WAR is assembled into
+# the pod at start-up and is not what was built, scanned or tagged. Use it to test
+# an unreleased build against a real deployment; ship a real image for anything
+# that matters.
+devWar:
+  enabled: false
+  # url | s3 | file
+  source: url
+  url: ""
+  # for source: s3 -- uses the pluginInstaller.s3 settings (image, endpointUrl,
+  # credentials, region)
+  s3Uri: ""
+  # for source: file -- a path already present in the pod
+  file: ""
+  # Optional, and worth setting: nothing else validates a side-loaded WAR.
+  sha256: ""
+
 containerService: false
 namespace: ""
 authplugins: []
