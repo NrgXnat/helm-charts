@@ -11,8 +11,13 @@ spec:
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   selector:
+    # Stable identity labels only. spec.selector is immutable, so a mutable label
+    # here (this used to include version: <appVersion>) makes every appVersion
+    # change an immutable-field update that helm upgrade cannot apply. The pod
+    # template below keeps the fuller label set; a selector being a subset of the
+    # pod labels is the intended shape, and matches every other object in the chart.
     matchLabels:
-      {{- include "xnat.statefulsetLabels" . | nindent 6 }}
+      {{- include "xnat.selectorLabels" . | nindent 6 }}
   serviceName: {{ include "xnat.fullname" . }}
   template:
     metadata:
