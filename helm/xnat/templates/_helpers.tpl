@@ -122,6 +122,9 @@ fields. Takes a dict of `coordinates` and `name`.
 {{- if or (lt (len $f) 3) (not (index $f 0)) (not (index $f 1)) (not (index $f 2)) -}}
 {{- fail (printf "plugins.%s: coordinates %q -- want groupId:artifactId:version[:packaging[:classifier]]" $name $coord) -}}
 {{- end -}}
+{{- if hasSuffix "-SNAPSHOT" (index $f 2) -}}
+{{- fail (printf "plugins.%s: coordinates %q -- a snapshot cannot be resolved from a coordinate. Its filename carries the deploy timestamp and build number, which only maven-metadata.xml knows, and the chart resolves coordinates while rendering (no network). Use `source: url` with the timestamped url, or stage the jar and use `source: s3` / `source: file` / `devPlugins`." $name $coord) -}}
+{{- end -}}
 {{- $pkg := "jar" -}}
 {{- if and (ge (len $f) 4) (index $f 3) -}}{{- $pkg = index $f 3 -}}{{- end -}}
 {{- $cls := "-" -}}
@@ -134,9 +137,8 @@ Repository-relative path for a *release* Maven coordinate, e.g.
   au.edu.qcif.xnat.openid:openid-auth-plugin:1.5.0:jar:xpl
   -> au/edu/qcif/xnat/openid/openid-auth-plugin/1.5.0/openid-auth-plugin-1.5.0-xpl.jar
 
-A -SNAPSHOT has no render-time path: its filename is timestamped and only
-maven-metadata.xml knows it, so those resolve in the init container instead (see
-xnat.pluginFetch). Takes a dict of `coordinates` and `name`.
+A -SNAPSHOT is rejected by xnat.mavenCoordParts: its filename is timestamped and
+only maven-metadata.xml knows it. Takes a dict of `coordinates` and `name`.
 */}}
 {{- define "xnat.mavenArtifactPath" -}}
 {{- $p := splitList " " (include "xnat.mavenCoordParts" .) -}}
@@ -144,14 +146,6 @@ xnat.pluginFetch). Takes a dict of `coordinates` and `name`.
 {{- $pkg := index $p 3 -}}{{- $cls := index $p 4 -}}
 {{- $sfx := "" -}}{{- if ne $cls "-" -}}{{- $sfx = printf "-%s" $cls -}}{{- end -}}
 {{- printf "%s/%s/%s/%s-%s%s.%s" (replace "." "/" $g) $a $v $a $v $sfx $pkg -}}
-{{- end -}}
-
-{{/*
-Whether a coordinates plugin names a snapshot. Snapshots resolve at runtime.
-Takes a dict of `coordinates` and `name`.
-*/}}
-{{- define "xnat.isSnapshot" -}}
-{{- if hasSuffix "-SNAPSHOT" (index (splitList " " (include "xnat.mavenCoordParts" .)) 2) -}}true{{- end -}}
 {{- end -}}
 
 {{/*
@@ -241,14 +235,8 @@ Shell body for a source-form plugin's init container. Fetches the jar to
 <target>.part, optionally checksums it, then moves it into place, so a failed
 fetch or checksum never leaves a jar behind.
 
-A release coordinate and a url are resolved by the chart, so the container just
-fetches a literal url. A -SNAPSHOT coordinate cannot be: its filename carries a
-deploy timestamp and build number that only maven-metadata.xml knows, and helm
-cannot make an HTTP request while rendering. Those do a two-step at runtime --
-fetch the metadata, read the <value> of the <snapshotVersion> matching this
-artifact's extension and classifier, then fetch that. Matching per classifier
-matters: classifiers can sit on different build numbers, so the top-level
-<snapshot><buildNumber> is not reliably the right one.
+Coordinates and urls are both resolved by the chart, so the container only fetches
+a literal url.
 
 Takes a dict of `plugin`, `name`, `repo` and `caCert` (bool).
 */}}
@@ -259,12 +247,6 @@ Takes a dict of `plugin`, `name`, `repo` and `caCert` (bool).
 {{- $part := printf "%s.part" $t -}}
 {{- $curl := "curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused" -}}
 {{- if .caCert -}}{{- $curl = printf "%s --cacert /mnt/plugin-ca/ca.crt" $curl -}}{{- end -}}
-{{- /* Only a coordinates plugin has a version to inspect; computed up front so a
-       url/file plugin never reaches the coordinate parser. */ -}}
-{{- $snap := "" -}}
-{{- if eq $c.source "coordinates" -}}
-{{- $snap = include "xnat.isSnapshot" (dict "coordinates" $c.coordinates "name" $name) -}}
-{{- end -}}
 set -eu
 {{ if eq $c.source "file" -}}
 {{- $src := "" -}}
@@ -274,22 +256,6 @@ set -eu
 {{- $src = required (printf "plugins.%s needs `file` (a path) or `secret` (name/key) for `source: file`" $name) $c.file -}}
 {{- end -}}
 cp {{ $src | quote }} {{ $part | quote }}
-{{- else if eq $snap "true" -}}
-{{- $p := splitList " " (include "xnat.mavenCoordParts" (dict "coordinates" $c.coordinates "name" $name)) -}}
-{{- $a := index $p 1 -}}{{- $pkg := index $p 3 -}}{{- $cls := index $p 4 -}}
-{{- $dir := printf "%s/%s/%s/%s" (trimSuffix "/" (include "xnat.pluginMavenBase" .)) (replace "." "/" (index $p 0)) $a (index $p 2) -}}
-d={{ $dir | quote }}
-{{ $curl }} -o /tmp/maven-metadata.xml "$d/maven-metadata.xml"
-v=$(tr -d '\n\r' < /tmp/maven-metadata.xml | sed 's#</snapshotVersion>#\n#g' \
-  | grep -F {{ printf "<extension>%s</extension>" $pkg | quote }} \
-  {{ if eq $cls "-" }}| grep -v '<classifier>' \{{ else }}| grep -F {{ printf "<classifier>%s</classifier>" $cls | quote }} \{{ end }}
-  | sed -n 's#.*<value>\([^<]*\)</value>.*#\1#p' | head -1)
-if [ -z "$v" ]; then
-  echo "no {{ $pkg }}{{ if ne $cls "-" }} (classifier {{ $cls }}){{ end }} artifact in $d/maven-metadata.xml" >&2
-  exit 1
-fi
-echo "resolved {{ index $p 2 }} -> $v"
-{{ $curl }} -o {{ $part | quote }} "$d/{{ $a }}-$v{{ if ne $cls "-" }}-{{ $cls }}{{ end }}.{{ $pkg }}"
 {{- else -}}
 {{ $curl }} -o {{ $part | quote }} {{ include "xnat.pluginArtifactUrl" (dict "plugin" $c "name" $name "repo" .repo) | quote }}
 {{- end }}

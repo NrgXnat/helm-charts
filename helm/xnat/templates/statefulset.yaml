@@ -240,9 +240,8 @@ spec:
         {{- else if $c.source }}
         # Source form: fetch a raw JAR (url|coordinates|file) into the shared
         # home-plugins volume, on a stock curl image -- no custom installer image,
-        # same as the s3 form above. Release coordinates and urls are resolved at
-        # render time so the fetched url is visible here; a -SNAPSHOT coordinate
-        # resolves through maven-metadata.xml at runtime (see xnat.pluginFetch).
+        # same as the s3 form above. Coordinates and urls are both resolved while
+        # rendering, so the url actually fetched is visible here.
         - name: {{ $plugin }}
           image: {{ $.Values.pluginInstaller.image | quote }}
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
