@@ -624,18 +624,29 @@ datasource:
   # wrapperPlugins=iam + TLS, and NO datasource.password. The login role is
   # cnpg.cluster.credentials.username, which must already exist and be granted
   # rds_iam on the instance; the password value is ignored. Requires:
-  #   - an image that bundles the AWS Advanced JDBC Wrapper (+ AWS SDK for
-  #     Java v2) and the RDS CA bundle at sslrootcert, via image.repository/tag
+  #   - an image that bundles the AWS Advanced JDBC Wrapper + AWS SDK for Java
+  #     v2 (application deps, versioned with the app; set image.repository/tag)
   #   - serviceAccount.annotations wiring an IAM identity with rds-db:connect on
   #     arn:aws:rds-db:<region>:<acct>:dbuser:<resource_id>/<username> (IRSA or
   #     EKS Pod Identity)
+  #   - the RDS CA bundle at sslrootcert when sslmode=verify-full (the default).
+  #     Do NOT bake it into the image: it is region-specific and AWS rotates it
+  #     on its own schedule. Provide it at the deploy layer as an operator-owned
+  #     ConfigMap mounted at dirname(sslrootcert) via extraVolumes/
+  #     extraVolumeMounts, e.g.:
+  #       kubectl create configmap rds-global-bundle --from-file=global-bundle.pem=./global-bundle.pem
+  #       extraVolumes:      [ { name: rds-ca, configMap: { name: rds-global-bundle } } ]
+  #       extraVolumeMounts: [ { name: rds-ca, mountPath: /etc/rds, readOnly: true } ]
+  #     Get the bundle from https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+  #     (or the regional bundle). Or set sslmode=require to skip cert
+  #     verification (encrypted, no bundle to manage, but no MITM protection).
   # Creating that login role and granting it rds_iam is a one-time DB-admin
   # step done out of band (it needs the master), not by this chart.
   iam:
     enabled: false
     region: "" # e.g. us-east-1; signs the auth token. If empty the wrapper parses it from the RDS hostname, so set it explicitly only for non-RDS-shaped endpoints (e.g. postgresqlIp).
-    sslmode: "verify-full"
-    sslrootcert: "/etc/rds/global-bundle.pem"
+    sslmode: "verify-full" # needs the RDS CA bundle at sslrootcert (see above); "require" skips cert verification and needs no bundle
+    sslrootcert: "/etc/rds/global-bundle.pem" # path the wrapper reads the CA from; supply via a mounted ConfigMap, do NOT bake into the image (see above)
     wrapperPlugins: "iam"
 
 # TCP-socket probes against the http (8080) port; see statefulset.yaml for why
