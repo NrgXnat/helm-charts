@@ -1,0 +1,14 @@
+# Same minimal credential guard as default-values.yaml, but with the opt-in
+# RDS IAM datasource enabled, so `helm lint` also exercises the
+# datasource.iam branch of secret.yaml (the plain-pgjdbc path is covered by
+# default-values.yaml). The host/port here are the default internal cnpg
+# service; the IAM datasource only needs to RENDER for lint, it is not a real
+# connection. region is set to exercise the optional &iamRegion query param.
+cnpg:
+  cluster:
+    credentials:
+      password: "ci-only-placeholder"
+datasource:
+  iam:
+    enabled: true
+    region: "us-east-1"
