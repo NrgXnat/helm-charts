@@ -1,0 +1,49 @@
+# Same minimal credential guard as default-values.yaml, plus the source-form
+# plugin paths that authenticate with pluginInstaller.credentials, so `helm lint`
+# and `helm template` exercise the matching in one render. No real fetch happens
+# -- these only need to RENDER. See examples/xnat/pluginCredentials.yml.
+#
+#   private-release  -- matches entry 0: gets its Bearer header (from the Secret)
+#                       and its literal Accept header.
+#   private-nexus    -- matches entry 1: a second host with its own credential,
+#                       covering first-match-wins across entries.
+#   public-plugin    -- matches nothing, so it renders with NO header and no
+#                       PLUGIN_CRED_* in its env. This is the leak regression --
+#                       a credential must not follow a plugin off its own hosts.
+cnpg:
+  cluster:
+    credentials:
+      password: "ci-only-placeholder"
+pluginInstaller:
+  credentials:
+    - matchPrefixes:
+        - https://api.github.com/
+        - https://raw.githubusercontent.com/
+      headers:
+        - name: Authorization
+          valuePrefix: "Bearer "
+          valueFrom:
+            secretKeyRef:
+              name: xnat-plugin-github-token
+              key: token
+        - name: Accept
+          value: application/octet-stream
+    - matchPrefixes:
+        - https://nexus.internal.example.org/repository/
+      headers:
+        - name: Authorization
+          valuePrefix: "Basic "
+          valueFrom:
+            secretKeyRef:
+              name: nexus-plugin-reader
+              key: basic
+plugins:
+  private-release:
+    source: url
+    url: https://api.github.com/repos/my-org/xnat-plugin-example/releases/assets/123456789
+  private-nexus:
+    source: url
+    url: https://nexus.internal.example.org/repository/raw-hosted/example.jar
+  public-plugin:
+    source: url
+    url: https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar

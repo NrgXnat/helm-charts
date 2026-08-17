@@ -412,7 +412,9 @@ plugins: {}
   #                             #   a dev side-load does anyway.
   #  mavenUrl: ""               # optional; overrides pluginRepository.mavenUrl for
   #                             #   this plugin, when it lives in its own repository
-  #  url: https://.../foo.jar   # for source: url
+  #  url: https://.../foo.jar   # for source: url. A jar somewhere private needs
+  #                             #   a credential -- see
+  #                             #   pluginInstaller.credentials.
   #  file: /mnt/foo/bar.jar     # for source: file -- a path already in the pod
   #  secret:                    # for source: file -- a Secret holding the jar,
   #    name: xnat-plugin-foo    #   mounted by the chart (use instead of `file`)
@@ -475,6 +477,39 @@ pluginInstaller:
   # Secret with a `ca.crt` key, mounted so the installer trusts a mirror serving
   # a self-signed certificate. Applies to url and coordinates sources.
   caCertSecret: ""
+  # Request headers for plugins that live somewhere private -- a GitHub bot
+  # token, a Nexus/Artifactory login, a GitLab job token. Each entry pairs a set
+  # of url prefixes with the headers to send when a `source: url` or
+  # `source: coordinates` fetch matches one of them. Empty by default: a public
+  # plugin needs no credential and no Secret.
+  #
+  # Prefixes match the url the chart actually fetches, i.e. AFTER any
+  # pluginRepository.baseUrl rewrite, and the first matching entry wins. So a
+  # plugin mirrored onto Nexus no longer matches its origin's prefix and is
+  # fetched with the mirror's credential rather than the origin's, and a plugin
+  # published on an unlisted host is fetched with none -- which is the point of
+  # matching a prefix instead of sending headers everywhere. Keep the trailing
+  # slash on a host prefix (see pluginRepository.matchPrefix for why), and note
+  # that a non-https match is refused while rendering rather than sent in
+  # cleartext.
+  #
+  # `valueFrom` reads the header's value from a Secret key, so the credential
+  # never lands in the rendered manifest; `value` is a literal, for the
+  # non-secret headers a private API needs alongside it. Worked examples, incl.
+  # the url form a private GitHub release asset takes and how to keep the token
+  # short-lived: examples/xnat/pluginCredentials.yml
+  credentials: []
+  #  - matchPrefixes:
+  #      - https://api.github.com/
+  #    headers:
+  #      - name: Authorization
+  #        valuePrefix: "Bearer "     # optional; prepended to the Secret's value
+  #        valueFrom:
+  #          secretKeyRef:
+  #            name: xnat-plugin-github-token
+  #            key: token
+  #      - name: Accept
+  #        value: application/octet-stream
   # S3 plugin install via `aws s3 cp` (no custom image) using the pod's IRSA
   # role -- set serviceAccount.annotations."eks.amazonaws.com/role-arn".
   # `image` is a stock AWS CLI image (pin a tag in production). Two modes:

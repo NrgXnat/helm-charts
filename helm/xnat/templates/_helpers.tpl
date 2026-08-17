@@ -231,6 +231,159 @@ envFrom:
 {{- end -}}
 
 {{/*
+Index into pluginInstaller.credentials of the entry that authenticates this
+plugin's fetch, or "" when none does.
+
+The entry is chosen by matching its matchPrefixes against the *resolved* url --
+after any pluginRepository.baseUrl rewrite. Matching the resolved url is what keeps
+a credential from leaking: a url the mirror rewrite has moved onto Nexus no longer
+matches its origin's prefix, so the mirror is fetched unauthenticated rather than
+being handed the origin's token, and a plugin published on an unlisted host never
+sees a credential at all.
+
+First match in list order wins, so a narrow prefix placed above a broad one
+overrides it. `source: file` never matches -- it copies a mounted jar and opens no
+connection.
+
+Takes the same dict as xnat.pluginArtifactUrl, plus `installer`
+(.Values.pluginInstaller).
+*/}}
+{{- define "xnat.pluginCredentialIndex" -}}
+{{- $creds := (.installer | default dict).credentials | default list -}}
+{{- if and $creds (ne .plugin.source "file") -}}
+{{- $url := include "xnat.pluginArtifactUrl" . -}}
+{{- $found := "" -}}
+{{- range $i, $cred := $creds -}}
+{{- range $p := ($cred.matchPrefixes | default list) -}}
+{{- if and (eq $found "") (hasPrefix $p $url) -}}
+{{- if not (hasPrefix "https://" $url) -}}
+{{- fail (printf "plugins.%s: url %q matches pluginInstaller.credentials[%d].matchPrefixes but is not https -- its credential would cross the network in cleartext. Use an https url, or remove the prefix that matches it." $.name $url $i) -}}
+{{- end -}}
+{{- $found = printf "%d" $i -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $found -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The matched credential's headers as curl flags.
+
+A header taking `valueFrom` is rendered as a shell expansion of the PLUGIN_CRED_<n>
+variable xnat.pluginCredentialEnv binds to the Secret key, so the credential itself
+never appears in the manifest, only the variable's name. The expansion sits inside
+double quotes, where the shell does not re-parse the value, so a password holding
+quotes or spaces survives intact.
+
+Redirects are safe to follow: since 7.58 curl drops a custom Authorization header
+when a redirect crosses to another host. That is what lets a fetch authenticate to
+an artifact API and then follow its redirect to a pre-signed CDN url, which
+typically rejects the request if the header comes along.
+
+Same dict as xnat.pluginCredentialIndex.
+*/}}
+{{- define "xnat.pluginCredentialFlags" -}}
+{{- $i := include "xnat.pluginCredentialIndex" . -}}
+{{- if ne $i "" -}}
+{{- $cred := index ((.installer).credentials) (atoi $i) -}}
+{{- range $n, $h := ($cred.headers | default list) -}}
+{{- include "xnat.assertCredentialHeader" (dict "header" $h "name" $.name "cred" $i "n" $n) -}}
+{{- if $h.valueFrom -}}
+{{- printf " -H \"%s: %s${PLUGIN_CRED_%d}\"" $h.name ($h.valuePrefix | default "") $n -}}
+{{- else -}}
+{{- printf " -H '%s: %s'" $h.name $h.value -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+PLUGIN_CRED_<n> environment variables binding the matched credential's valueFrom
+headers to their Secret keys, for the init containers whose url matched. Nothing is
+rendered for the others, so a plugin fetched from elsewhere never carries a
+credential in its environment.
+
+Emits nothing at all when the matched entry is made up entirely of literal headers,
+which need no Secret.
+
+The secretKeyRefs are deliberately not `optional` -- a missing Secret or key holds
+the pod at CreateContainerConfigError naming what it could not find, which is a
+clearer failure than an init container that starts and takes a 401 (or, worse, one
+whose url is public enough to quietly succeed unauthenticated).
+
+Same dict as xnat.pluginCredentialIndex.
+*/}}
+{{- define "xnat.pluginCredentialEnv" -}}
+{{- $i := include "xnat.pluginCredentialIndex" . -}}
+{{- if ne $i "" -}}
+{{- $cred := index ((.installer).credentials) (atoi $i) -}}
+{{- $bound := list -}}
+{{- range $n, $h := ($cred.headers | default list) -}}
+{{- if $h.valueFrom -}}{{- $bound = append $bound (dict "n" $n "ref" $h.valueFrom.secretKeyRef) -}}{{- end -}}
+{{- end -}}
+{{- if $bound -}}
+env:
+{{- range $b := $bound }}
+  - name: PLUGIN_CRED_{{ $b.n }}
+    valueFrom:
+      secretKeyRef:
+        name: {{ $b.ref.name | quote }}
+        key: {{ $b.ref.key | quote }}
+{{- end }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Rejects a credentials header the init container's shell could not carry verbatim.
+
+The header name and any literal value are rendered straight into the fetch script,
+so a quote or a newline in either would end the -H argument early and hand the rest
+of the string to the shell as code. They are refused here, while rendering, rather
+than producing an init container that fails obscurely or does something
+unintended. Values arriving from a Secret are exempt: they reach curl through a
+variable expansion the shell does not re-parse.
+
+Takes a dict of `header`, `name` (the plugin), `cred` (its index) and `n` (the
+header's index).
+*/}}
+{{- define "xnat.assertCredentialHeader" -}}
+{{- $h := .header -}}
+{{- $at := printf "plugins.%s: pluginInstaller.credentials[%s].headers[%d]" .name .cred .n -}}
+{{- if not $h.name -}}
+{{- fail (printf "%s needs a `name`" $at) -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9-]+$" $h.name) -}}
+{{- fail (printf "%s: header name %q -- want letters, digits and dashes only" $at $h.name) -}}
+{{- end -}}
+{{- if and $h.valueFrom (hasKey $h "value") -}}
+{{- fail (printf "%s (%s) sets both `value` and `valueFrom` -- pick one" $at $h.name) -}}
+{{- end -}}
+{{- if $h.valueFrom -}}
+{{- if not $h.valueFrom.secretKeyRef -}}
+{{- fail (printf "%s (%s): `valueFrom` needs a `secretKeyRef` (name/key) -- it is the only source supported here" $at $h.name) -}}
+{{- end -}}
+{{- if not $h.valueFrom.secretKeyRef.name -}}
+{{- fail (printf "%s (%s): `valueFrom.secretKeyRef` needs a `name`" $at $h.name) -}}
+{{- end -}}
+{{- if not $h.valueFrom.secretKeyRef.key -}}
+{{- fail (printf "%s (%s): `valueFrom.secretKeyRef` needs a `key` -- the Secret key holding the credential" $at $h.name) -}}
+{{- end -}}
+{{- if regexMatch "[\"$`\\\\\n]" ($h.valuePrefix | default "") -}}
+{{- fail (printf "%s (%s): `valuePrefix` %q cannot contain a quote, backslash, newline, $ or backtick -- it is rendered inside the fetch script's double quotes. A prefix is only meant to be a scheme such as \"Bearer \"; put the rest in the Secret." $at $h.name $h.valuePrefix) -}}
+{{- end -}}
+{{- else -}}
+{{- if not (hasKey $h "value") -}}
+{{- fail (printf "%s (%s) needs a `value` (a literal) or a `valueFrom` (a Secret key)" $at $h.name) -}}
+{{- end -}}
+{{- if regexMatch "['\n]" ($h.value | toString) -}}
+{{- fail (printf "%s (%s): `value` %q cannot contain a single quote or a newline -- it is rendered as a literal inside the fetch script. Supply it as `valueFrom` a Secret instead." $at $h.name $h.value) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Shell body for a source-form plugin's init container. Fetches the jar to
 <target>.part, optionally checksums it, then moves it into place, so a failed
 fetch or checksum never leaves a jar behind.
@@ -238,7 +391,7 @@ fetch or checksum never leaves a jar behind.
 Coordinates and urls are both resolved by the chart, so the container only fetches
 a literal url.
 
-Takes a dict of `plugin`, `name`, `repo` and `caCert` (bool).
+Takes a dict of `plugin`, `name`, `repo`, `caCert` (bool) and `installer`.
 */}}
 {{- define "xnat.pluginFetch" -}}
 {{- $c := .plugin -}}
@@ -247,6 +400,7 @@ Takes a dict of `plugin`, `name`, `repo` and `caCert` (bool).
 {{- $part := printf "%s.part" $t -}}
 {{- $curl := "curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused" -}}
 {{- if .caCert -}}{{- $curl = printf "%s --cacert /mnt/plugin-ca/ca.crt" $curl -}}{{- end -}}
+{{- $curl = printf "%s%s" $curl (include "xnat.pluginCredentialFlags" .) -}}
 set -eu
 {{ if eq $c.source "file" -}}
 {{- $src := "" -}}
