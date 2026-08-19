@@ -245,20 +245,23 @@ First match in list order wins, so a narrow prefix placed above a broad one
 overrides it. `source: file` never matches -- it copies a mounted jar and opens no
 connection.
 
+Matching is a plain prefix test, which is only as safe as the prefix: it is
+xnat.assertCredentials that requires every prefix to be https and to run past its
+host's trailing `/`, so a cleartext url can never match one, and a prefix can
+never reach a lookalike host that merely starts with the same characters.
+
 Takes the same dict as xnat.pluginArtifactUrl, plus `installer`
-(.Values.pluginInstaller).
+(.Values.pluginInstaller) and optionally `url` (the already-resolved url, to save
+resolving it again).
 */}}
 {{- define "xnat.pluginCredentialIndex" -}}
 {{- $creds := (.installer | default dict).credentials | default list -}}
 {{- if and $creds (ne .plugin.source "file") -}}
-{{- $url := include "xnat.pluginArtifactUrl" . -}}
+{{- $url := .url | default (include "xnat.pluginArtifactUrl" .) -}}
 {{- $found := "" -}}
 {{- range $i, $cred := $creds -}}
 {{- range $p := ($cred.matchPrefixes | default list) -}}
 {{- if and (eq $found "") (hasPrefix $p $url) -}}
-{{- if not (hasPrefix "https://" $url) -}}
-{{- fail (printf "plugins.%s: url %q matches pluginInstaller.credentials[%d].matchPrefixes but is not https -- its credential would cross the network in cleartext. Use an https url, or remove the prefix that matches it." $.name $url $i) -}}
-{{- end -}}
 {{- $found = printf "%d" $i -}}
 {{- end -}}
 {{- end -}}
@@ -276,10 +279,9 @@ never appears in the manifest, only the variable's name. The expansion sits insi
 double quotes, where the shell does not re-parse the value, so a password holding
 quotes or spaces survives intact.
 
-Redirects are safe to follow: since 7.58 curl drops a custom Authorization header
-when a redirect crosses to another host. That is what lets a fetch authenticate to
-an artifact API and then follow its redirect to a pre-signed CDN url, which
-typically rejects the request if the header comes along.
+Whether the fetch may follow a redirect with these headers attached is decided
+separately, by xnat.pluginCurlRedirect. The headers themselves are validated up
+front by xnat.assertCredentials, so nothing is checked here.
 
 Same dict as xnat.pluginCredentialIndex.
 */}}
@@ -288,7 +290,6 @@ Same dict as xnat.pluginCredentialIndex.
 {{- if ne $i "" -}}
 {{- $cred := index ((.installer).credentials) (atoi $i) -}}
 {{- range $n, $h := ($cred.headers | default list) -}}
-{{- include "xnat.assertCredentialHeader" (dict "header" $h "name" $.name "cred" $i "n" $n) -}}
 {{- if $h.valueFrom -}}
 {{- printf " -H \"%s: %s${PLUGIN_CRED_%d}\"" $h.name ($h.valuePrefix | default "") $n -}}
 {{- else -}}
@@ -296,6 +297,49 @@ Same dict as xnat.pluginCredentialIndex.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Redirect flags for a plugin fetch: `-L`, or `-L --max-redirs 0` when following a
+redirect would hand the credential to another host.
+
+Since 7.58 curl drops a custom Authorization header (and Cookie) when a redirect
+crosses to another host, which is what lets a fetch authenticate to an artifact API
+and then follow its redirect to a pre-signed CDN url that rejects the request if
+the header comes along. No other header name gets that treatment: a token sent as
+PRIVATE-TOKEN (GitLab) or X-JFrog-Art-Api (Artifactory) rides the redirect to
+whichever storage host answers it. So when the matched credential puts a Secret
+under any other header name, the fetch refuses to follow redirects instead --
+`--max-redirs 0` makes curl fail with exit 47 before issuing the second request,
+which is both safer than the leak and clearer than dropping -L altogether (that
+would write the redirect's own body into the jar).
+
+`followRedirects` on the credentials entry overrides the choice either way: true
+follows the redirect, credential and all, for an endpoint known to redirect within
+its own host; false refuses even for Authorization.
+
+Only `valueFrom` headers count as credentials here. A literal `value` is already in
+the clear in the manifest, so it is not what this protects -- put anything secret in
+`valueFrom`.
+
+Same dict as xnat.pluginCredentialIndex.
+*/}}
+{{- define "xnat.pluginCurlRedirect" -}}
+{{- $follow := true -}}
+{{- $i := include "xnat.pluginCredentialIndex" . -}}
+{{- if ne $i "" -}}
+{{- $cred := index ((.installer).credentials) (atoi $i) -}}
+{{- if hasKey $cred "followRedirects" -}}
+{{- $follow = $cred.followRedirects -}}
+{{- else -}}
+{{- range $h := ($cred.headers | default list) -}}
+{{- if and $h.valueFrom (not (has (lower ($h.name | default "")) (list "authorization" "cookie"))) -}}
+{{- $follow = false -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $follow }}-L{{ else }}-L --max-redirs 0{{ end -}}
 {{- end -}}
 
 {{/*
@@ -336,6 +380,41 @@ env:
 {{- end -}}
 
 {{/*
+Rejects a malformed pluginInstaller.credentials entry.
+
+Runs over every configured entry, not just the ones some plugin's url matches
+today, so a mistake fails `helm lint` when it is written rather than later, when
+someone adds the plugin whose url first matches that entry.
+
+Takes the root context.
+*/}}
+{{- define "xnat.assertCredentials" -}}
+{{- range $i, $cred := ((.Values.pluginInstaller | default dict).credentials | default list) -}}
+{{- $at := printf "pluginInstaller.credentials[%d]" $i -}}
+{{- if not ($cred.matchPrefixes | default list) -}}
+{{- fail (printf "%s needs `matchPrefixes` -- the url prefixes whose fetches carry its headers. An entry matching nothing sends no credential anywhere." $at) -}}
+{{- end -}}
+{{- range $p := $cred.matchPrefixes -}}
+{{- if regexMatch "^https://[^/]*@" $p -}}
+{{- fail (printf "%s: matchPrefix %q carries userinfo before its host -- the host is what comes after the `@` (https://api.github.com@evil.example/ is a url on evil.example), so the prefix would match somewhere other than it names. Drop the credential from the prefix; it belongs in `headers`." $at $p) -}}
+{{- end -}}
+{{- if not (regexMatch "^https://[^/@]+/" $p) -}}
+{{- fail (printf "%s: matchPrefix %q must be an https url carried past its host's trailing slash, e.g. https://api.github.com/ -- http would send the credential in cleartext, and a prefix stopping short of the slash matches any host merely starting with it (https://api.github.com also matches https://api.github.com.example.net/)." $at $p) -}}
+{{- end -}}
+{{- end -}}
+{{- if not ($cred.headers | default list) -}}
+{{- fail (printf "%s needs `headers` -- what to send to the urls its matchPrefixes match" $at) -}}
+{{- end -}}
+{{- if and (hasKey $cred "followRedirects") (not (kindIs "bool" $cred.followRedirects)) -}}
+{{- fail (printf "%s: `followRedirects` must be true or false" $at) -}}
+{{- end -}}
+{{- range $n, $h := $cred.headers -}}
+{{- include "xnat.assertCredentialHeader" (dict "header" $h "at" (printf "%s.headers[%d]" $at $n)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Rejects a credentials header the init container's shell could not carry verbatim.
 
 The header name and any literal value are rendered straight into the fetch script,
@@ -345,19 +424,19 @@ than producing an init container that fails obscurely or does something
 unintended. Values arriving from a Secret are exempt: they reach curl through a
 variable expansion the shell does not re-parse.
 
-Takes a dict of `header`, `name` (the plugin), `cred` (its index) and `n` (the
-header's index).
+Takes a dict of `header` and `at` (where it sits in the values, for the message).
 */}}
 {{- define "xnat.assertCredentialHeader" -}}
 {{- $h := .header -}}
-{{- $at := printf "plugins.%s: pluginInstaller.credentials[%s].headers[%d]" .name .cred .n -}}
+{{- $at := .at -}}
+{{- $hasValue := and (hasKey $h "value") (not (kindIs "invalid" $h.value)) -}}
 {{- if not $h.name -}}
 {{- fail (printf "%s needs a `name`" $at) -}}
 {{- end -}}
 {{- if not (regexMatch "^[A-Za-z0-9-]+$" $h.name) -}}
 {{- fail (printf "%s: header name %q -- want letters, digits and dashes only" $at $h.name) -}}
 {{- end -}}
-{{- if and $h.valueFrom (hasKey $h "value") -}}
+{{- if and $h.valueFrom $hasValue -}}
 {{- fail (printf "%s (%s) sets both `value` and `valueFrom` -- pick one" $at $h.name) -}}
 {{- end -}}
 {{- if $h.valueFrom -}}
@@ -374,8 +453,8 @@ header's index).
 {{- fail (printf "%s (%s): `valuePrefix` %q cannot contain a quote, backslash, newline, $ or backtick -- it is rendered inside the fetch script's double quotes. A prefix is only meant to be a scheme such as \"Bearer \"; put the rest in the Secret." $at $h.name $h.valuePrefix) -}}
 {{- end -}}
 {{- else -}}
-{{- if not (hasKey $h "value") -}}
-{{- fail (printf "%s (%s) needs a `value` (a literal) or a `valueFrom` (a Secret key)" $at $h.name) -}}
+{{- if not $hasValue -}}
+{{- fail (printf "%s (%s) needs a `value` (a literal -- `value:` with nothing after it does not count) or a `valueFrom` (a Secret key)" $at $h.name) -}}
 {{- end -}}
 {{- if regexMatch "['\n]" ($h.value | toString) -}}
 {{- fail (printf "%s (%s): `value` %q cannot contain a single quote or a newline -- it is rendered as a literal inside the fetch script. Supply it as `valueFrom` a Secret instead." $at $h.name $h.value) -}}
@@ -398,9 +477,14 @@ Takes a dict of `plugin`, `name`, `repo`, `caCert` (bool) and `installer`.
 {{- $name := .name -}}
 {{- $t := printf "/data/xnat/home/plugins/%s" ($c.target | default (printf "%s.jar" $name)) -}}
 {{- $part := printf "%s.part" $t -}}
-{{- $curl := "curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused" -}}
+{{- $url := "" -}}
+{{- if ne $c.source "file" -}}
+{{- $url = include "xnat.pluginArtifactUrl" (dict "plugin" $c "name" $name "repo" .repo) -}}
+{{- end -}}
+{{- $d := dict "plugin" $c "name" $name "repo" .repo "installer" .installer "url" $url -}}
+{{- $curl := printf "curl -fsS %s --retry 3 --retry-delay 2 --retry-connrefused" (include "xnat.pluginCurlRedirect" $d) -}}
 {{- if .caCert -}}{{- $curl = printf "%s --cacert /mnt/plugin-ca/ca.crt" $curl -}}{{- end -}}
-{{- $curl = printf "%s%s" $curl (include "xnat.pluginCredentialFlags" .) -}}
+{{- $curl = printf "%s%s" $curl (include "xnat.pluginCredentialFlags" $d) -}}
 set -eu
 {{ if eq $c.source "file" -}}
 {{- $src := "" -}}
@@ -411,7 +495,7 @@ set -eu
 {{- end -}}
 cp {{ $src | quote }} {{ $part | quote }}
 {{- else -}}
-{{ $curl }} -o {{ $part | quote }} {{ include "xnat.pluginArtifactUrl" (dict "plugin" $c "name" $name "repo" .repo) | quote }}
+{{ $curl }} -o {{ $part | quote }} {{ $url | quote }}
 {{- end }}
 {{- with $c.sha256 }}
 echo {{ . | quote }}{{ printf "  %s" $part | quote }} | sha256sum -c -

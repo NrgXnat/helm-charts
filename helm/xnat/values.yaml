@@ -488,16 +488,27 @@ pluginInstaller:
   # plugin mirrored onto Nexus no longer matches its origin's prefix and is
   # fetched with the mirror's credential rather than the origin's, and a plugin
   # published on an unlisted host is fetched with none -- which is the point of
-  # matching a prefix instead of sending headers everywhere. Keep the trailing
-  # slash on a host prefix (see pluginRepository.matchPrefix for why), and note
-  # that a non-https match is refused while rendering rather than sent in
-  # cleartext.
+  # matching a prefix instead of sending headers everywhere. A prefix has to be
+  # https and has to run past its host's trailing slash, or rendering fails:
+  # http would carry the credential in cleartext, and `https://api.github.com`
+  # without the slash would also match `https://api.github.com.example.net/`.
   #
   # `valueFrom` reads the header's value from a Secret key, so the credential
   # never lands in the rendered manifest; `value` is a literal, for the
-  # non-secret headers a private API needs alongside it. Worked examples, incl.
-  # the url form a private GitHub release asset takes and how to keep the token
-  # short-lived: examples/xnat/pluginCredentials.yml
+  # non-secret headers a private API needs alongside it. Every entry is
+  # validated while rendering, matched by a plugin or not.
+  #
+  # A credential sent as `Authorization` (or `Cookie`) is dropped by curl if the
+  # fetch is redirected to another host, so an artifact API can authenticate the
+  # first hop and hand off to a pre-signed CDN url on the second. Any other
+  # header name would ride the redirect and leak, so a fetch carrying a Secret
+  # under one refuses redirects instead, failing with curl exit 47. Set
+  # `followRedirects: true` on the entry to accept the redirect (and the
+  # credential travelling with it) for an endpoint that redirects within its own
+  # host, or `false` to refuse redirects even for `Authorization`.
+  #
+  # Worked examples, incl. the url form a private GitHub release asset takes and
+  # how to keep the token short-lived: examples/xnat/pluginCredentials.yml
   credentials: []
   #  - matchPrefixes:
   #      - https://api.github.com/
@@ -510,6 +521,16 @@ pluginInstaller:
   #            key: token
   #      - name: Accept
   #        value: application/octet-stream
+  #  - matchPrefixes:
+  #      - https://gitlab.example.org/api/v4/
+  #    followRedirects: false       # optional; the default for a credential sent
+  #                                 #   under a header other than Authorization
+  #    headers:
+  #      - name: PRIVATE-TOKEN
+  #        valueFrom:
+  #          secretKeyRef:
+  #            name: xnat-plugin-gitlab-token
+  #            key: token
   # S3 plugin install via `aws s3 cp` (no custom image) using the pod's IRSA
   # role -- set serviceAccount.annotations."eks.amazonaws.com/role-arn".
   # `image` is a stock AWS CLI image (pin a tag in production). Two modes:

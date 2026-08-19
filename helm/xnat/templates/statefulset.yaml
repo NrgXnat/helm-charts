@@ -1,3 +1,5 @@
+{{/* Validate every pluginInstaller.credentials entry, matched by a plugin or not. */}}
+{{- include "xnat.assertCredentials" . -}}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

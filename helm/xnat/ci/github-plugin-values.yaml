@@ -7,6 +7,12 @@
 #                       and its literal Accept header.
 #   private-nexus    -- matches entry 1: a second host with its own credential,
 #                       covering first-match-wins across entries.
+#   private-gitlab   -- matches entry 2, whose credential is NOT an Authorization
+#                       header, so its fetch renders `--max-redirs 0`: curl would
+#                       not strip that header on a cross-host redirect, so it
+#                       refuses the redirect instead of leaking the token.
+#   private-jfrog    -- matches entry 3, same header shape but with
+#                       followRedirects: true, so it renders plain `-L` again.
 #   public-plugin    -- matches nothing, so it renders with NO header and no
 #                       PLUGIN_CRED_* in its env. This is the leak regression --
 #                       a credential must not follow a plugin off its own hosts.
@@ -37,6 +43,23 @@ pluginInstaller:
             secretKeyRef:
               name: nexus-plugin-reader
               key: basic
+    - matchPrefixes:
+        - https://gitlab.example.org/api/v4/
+      headers:
+        - name: PRIVATE-TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: gitlab-plugin-token
+              key: token
+    - matchPrefixes:
+        - https://artifactory.internal.example.org/artifactory/
+      followRedirects: true
+      headers:
+        - name: X-JFrog-Art-Api
+          valueFrom:
+            secretKeyRef:
+              name: jfrog-plugin-reader
+              key: apiKey
 plugins:
   private-release:
     source: url
@@ -44,6 +67,12 @@ plugins:
   private-nexus:
     source: url
     url: https://nexus.internal.example.org/repository/raw-hosted/example.jar
+  private-gitlab:
+    source: url
+    url: https://gitlab.example.org/api/v4/projects/42/packages/generic/xnat/1.0.0/example.jar
+  private-jfrog:
+    source: url
+    url: https://artifactory.internal.example.org/artifactory/xnat-plugins/example.jar
   public-plugin:
     source: url
     url: https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar
