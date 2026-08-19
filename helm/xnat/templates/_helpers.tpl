@@ -245,10 +245,9 @@ First match in list order wins, so a narrow prefix placed above a broad one
 overrides it. `source: file` never matches -- it copies a mounted jar and opens no
 connection.
 
-Matching is a plain prefix test, which is only as safe as the prefix: it is
-xnat.assertCredentials that requires every prefix to be https and to run past its
-host's trailing `/`, so a cleartext url can never match one, and a prefix can
-never reach a lookalike host that merely starts with the same characters.
+A plain prefix test, so its safety rests on the prefix: xnat.assertCredentials
+requires each one to be https and to run past its host's `/`, which is what keeps a
+cleartext url and a lookalike host from matching.
 
 Takes the same dict as xnat.pluginArtifactUrl, plus `installer`
 (.Values.pluginInstaller) and optionally `url` (the already-resolved url, to save
@@ -279,9 +278,8 @@ never appears in the manifest, only the variable's name. The expansion sits insi
 double quotes, where the shell does not re-parse the value, so a password holding
 quotes or spaces survives intact.
 
-Whether the fetch may follow a redirect with these headers attached is decided
-separately, by xnat.pluginCurlRedirect. The headers themselves are validated up
-front by xnat.assertCredentials, so nothing is checked here.
+Redirect handling is decided separately, by xnat.pluginCurlRedirect; the headers
+are validated up front by xnat.assertCredentials.
 
 Same dict as xnat.pluginCredentialIndex.
 */}}
@@ -303,24 +301,15 @@ Same dict as xnat.pluginCredentialIndex.
 Redirect flags for a plugin fetch: `-L`, or `-L --max-redirs 0` when following a
 redirect would hand the credential to another host.
 
-Since 7.58 curl drops a custom Authorization header (and Cookie) when a redirect
-crosses to another host, which is what lets a fetch authenticate to an artifact API
-and then follow its redirect to a pre-signed CDN url that rejects the request if
-the header comes along. No other header name gets that treatment: a token sent as
-PRIVATE-TOKEN (GitLab) or X-JFrog-Art-Api (Artifactory) rides the redirect to
-whichever storage host answers it. So when the matched credential puts a Secret
-under any other header name, the fetch refuses to follow redirects instead --
-`--max-redirs 0` makes curl fail with exit 47 before issuing the second request,
-which is both safer than the leak and clearer than dropping -L altogether (that
-would write the redirect's own body into the jar).
-
-`followRedirects` on the credentials entry overrides the choice either way: true
-follows the redirect, credential and all, for an endpoint known to redirect within
-its own host; false refuses even for Authorization.
-
-Only `valueFrom` headers count as credentials here. A literal `value` is already in
-the clear in the manifest, so it is not what this protects -- put anything secret in
-`valueFrom`.
+Since 7.58 curl drops a custom Authorization header (and Cookie) on a cross-host
+redirect, which is what lets an artifact API hop authenticate and its pre-signed CDN
+hop not. No other header name gets that treatment -- PRIVATE-TOKEN (GitLab),
+X-JFrog-Art-Api (Artifactory) -- so a fetch whose credential is a Secret under one
+of those refuses the redirect: `--max-redirs 0` fails with exit 47 before the second
+request, where dropping -L would instead write the redirect's body into the jar.
+`followRedirects` on the entry overrides either way. Only `valueFrom` counts as a
+credential here; a literal `value` is in the manifest in the clear already. See
+examples/xnat/pluginCredentials.yml.
 
 Same dict as xnat.pluginCredentialIndex.
 */}}
@@ -382,9 +371,9 @@ env:
 {{/*
 Rejects a malformed pluginInstaller.credentials entry.
 
-Runs over every configured entry, not just the ones some plugin's url matches
-today, so a mistake fails `helm lint` when it is written rather than later, when
-someone adds the plugin whose url first matches that entry.
+Runs over every entry, not just the ones a plugin's url matches today, so a mistake
+fails `helm lint` when it is written rather than when someone later adds the plugin
+whose url first matches it.
 
 Takes the root context.
 */}}
@@ -392,14 +381,14 @@ Takes the root context.
 {{- range $i, $cred := ((.Values.pluginInstaller | default dict).credentials | default list) -}}
 {{- $at := printf "pluginInstaller.credentials[%d]" $i -}}
 {{- if not ($cred.matchPrefixes | default list) -}}
-{{- fail (printf "%s needs `matchPrefixes` -- the url prefixes whose fetches carry its headers. An entry matching nothing sends no credential anywhere." $at) -}}
+{{- fail (printf "%s needs `matchPrefixes` -- the url prefixes whose fetches carry its headers" $at) -}}
 {{- end -}}
 {{- range $p := $cred.matchPrefixes -}}
 {{- if regexMatch "^https://[^/]*@" $p -}}
-{{- fail (printf "%s: matchPrefix %q carries userinfo before its host -- the host is what comes after the `@` (https://api.github.com@evil.example/ is a url on evil.example), so the prefix would match somewhere other than it names. Drop the credential from the prefix; it belongs in `headers`." $at $p) -}}
+{{- fail (printf "%s: matchPrefix %q puts userinfo before its host -- the host is whatever follows the `@`, so the prefix matches somewhere other than it reads as. Credentials belong in `headers`." $at $p) -}}
 {{- end -}}
 {{- if not (regexMatch "^https://[^/@]+/" $p) -}}
-{{- fail (printf "%s: matchPrefix %q must be an https url carried past its host's trailing slash, e.g. https://api.github.com/ -- http would send the credential in cleartext, and a prefix stopping short of the slash matches any host merely starting with it (https://api.github.com also matches https://api.github.com.example.net/)." $at $p) -}}
+{{- fail (printf "%s: matchPrefix %q must be https and must run past its host's slash, e.g. https://api.github.com/ -- http would send the credential in cleartext, and stopping short of the slash also matches https://api.github.com.example.net/." $at $p) -}}
 {{- end -}}
 {{- end -}}
 {{- if not ($cred.headers | default list) -}}
@@ -454,7 +443,7 @@ Takes a dict of `header` and `at` (where it sits in the values, for the message)
 {{- end -}}
 {{- else -}}
 {{- if not $hasValue -}}
-{{- fail (printf "%s (%s) needs a `value` (a literal -- `value:` with nothing after it does not count) or a `valueFrom` (a Secret key)" $at $h.name) -}}
+{{- fail (printf "%s (%s) needs a `value` (a literal; `value:` with nothing after it does not count) or a `valueFrom` (a Secret key)" $at $h.name) -}}
 {{- end -}}
 {{- if regexMatch "['\n]" ($h.value | toString) -}}
 {{- fail (printf "%s (%s): `value` %q cannot contain a single quote or a newline -- it is rendered as a literal inside the fetch script. Supply it as `valueFrom` a Secret instead." $at $h.name $h.value) -}}
