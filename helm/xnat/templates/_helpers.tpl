@@ -383,6 +383,9 @@ Takes the root context.
 {{- if not ($cred.matchPrefixes | default list) -}}
 {{- fail (printf "%s needs `matchPrefixes` -- the url prefixes whose fetches carry its headers" $at) -}}
 {{- end -}}
+{{- if not (kindIs "slice" $cred.matchPrefixes) -}}
+{{- fail (printf "%s: `matchPrefixes` must be a list of prefixes (a `-` item each), not a %s" $at (kindOf $cred.matchPrefixes)) -}}
+{{- end -}}
 {{- range $p := $cred.matchPrefixes -}}
 {{- if regexMatch "^https://[^/]*@" $p -}}
 {{- fail (printf "%s: matchPrefix %q puts userinfo before its host -- the host is whatever follows the `@`, so the prefix matches somewhere other than it reads as. Credentials belong in `headers`." $at $p) -}}
@@ -393,6 +396,9 @@ Takes the root context.
 {{- end -}}
 {{- if not ($cred.headers | default list) -}}
 {{- fail (printf "%s needs `headers` -- what to send to the urls its matchPrefixes match" $at) -}}
+{{- end -}}
+{{- if not (kindIs "slice" $cred.headers) -}}
+{{- fail (printf "%s: `headers` must be a list of headers (a `-` item each), not a %s" $at (kindOf $cred.headers)) -}}
 {{- end -}}
 {{- if and (hasKey $cred "followRedirects") (not (kindIs "bool" $cred.followRedirects)) -}}
 {{- fail (printf "%s: `followRedirects` must be true or false" $at) -}}
@@ -410,8 +416,10 @@ The header name and any literal value are rendered straight into the fetch scrip
 so a quote or a newline in either would end the -H argument early and hand the rest
 of the string to the shell as code. They are refused here, while rendering, rather
 than producing an init container that fails obscurely or does something
-unintended. Values arriving from a Secret are exempt: they reach curl through a
-variable expansion the shell does not re-parse.
+unintended. A literal that is not a string is refused too -- it would otherwise
+reach xnat.pluginCredentialFlags' `%s` as Go's `%!s(float64=2)`. Values arriving
+from a Secret are exempt: they reach curl through a variable expansion the shell
+does not re-parse.
 
 Takes a dict of `header` and `at` (where it sits in the values, for the message).
 */}}
@@ -438,6 +446,9 @@ Takes a dict of `header` and `at` (where it sits in the values, for the message)
 {{- if not $h.valueFrom.secretKeyRef.key -}}
 {{- fail (printf "%s (%s): `valueFrom.secretKeyRef` needs a `key` -- the Secret key holding the credential" $at $h.name) -}}
 {{- end -}}
+{{- if and (hasKey $h "valuePrefix") (not (kindIs "string" $h.valuePrefix)) -}}
+{{- fail (printf "%s (%s): `valuePrefix` must be a string -- quote it, as in `valuePrefix: \"Bearer \"`" $at $h.name) -}}
+{{- end -}}
 {{- if regexMatch "[\"$`\\\\\n]" ($h.valuePrefix | default "") -}}
 {{- fail (printf "%s (%s): `valuePrefix` %q cannot contain a quote, backslash, newline, $ or backtick -- it is rendered inside the fetch script's double quotes. A prefix is only meant to be a scheme such as \"Bearer \"; put the rest in the Secret." $at $h.name $h.valuePrefix) -}}
 {{- end -}}
@@ -445,7 +456,10 @@ Takes a dict of `header` and `at` (where it sits in the values, for the message)
 {{- if not $hasValue -}}
 {{- fail (printf "%s (%s) needs a `value` (a literal; `value:` with nothing after it does not count) or a `valueFrom` (a Secret key)" $at $h.name) -}}
 {{- end -}}
-{{- if regexMatch "['\n]" ($h.value | toString) -}}
+{{- if not (kindIs "string" $h.value) -}}
+{{- fail (printf "%s (%s): `value` must be a string -- quote it, as in `value: \"2\"`. Unquoted, YAML coerces it before the chart sees it (`yes` becomes true, `1.0` becomes 1) and it reaches the header changed." $at $h.name) -}}
+{{- end -}}
+{{- if regexMatch "['\n]" $h.value -}}
 {{- fail (printf "%s (%s): `value` %q cannot contain a single quote or a newline -- it is rendered as a literal inside the fetch script. Supply it as `valueFrom` a Secret instead." $at $h.name $h.value) -}}
 {{- end -}}
 {{- end -}}
