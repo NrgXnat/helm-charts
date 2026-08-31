@@ -379,20 +379,18 @@ spec:
         - name: home-init
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
-          # Same securityContext as the main container. The chown below is guarded
-          # on `id -u`, so pinning a uid here just takes the non-root branch; a
-          # root-USER image needs .Values.securityContext relaxed, which such an
-          # image already requires for the main container.
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           command:
             - 'bash'
             - '-c'
             - |
-              set -x
+              set -ex
               shopt -s extglob
               # Copy Tomcat folder
-              [ -d /TOMCAT ] && cp -r --preserve=mode,timestamps /usr/local/tomcat/* /TOMCAT
+              if [ -d /TOMCAT ]; then
+                cp -r --preserve=mode,timestamps /usr/local/tomcat/* /TOMCAT
+              fi
               # chown only when running as root. With a root-USER image, home-init
               # runs as root and must re-own the copied tree to the runtime uid.
               # With a non-root image it already runs as that uid (files are
@@ -402,19 +400,22 @@ spec:
               if [ "$(id -u)" = "0" ]; then
                 chown -R {{ default "1000" .Values.securityContext.runAsUser }} /TOMCAT
               fi
+              # Copy XNAT_HOME directory excluding the plugins folder
+              cp -r --preserve=mode,timestamps ${XNAT_HOME}/!(plugins) /XNAT_HOME
+              mkdir -p /XNAT_HOME/config
               # Setup xnat-conf.properties
               readarray -d - -t REP <<< "${POD_NAME}"
-              cp /tmp/xnat-conf.properties ${XNAT_HOME}/config/xnat-conf.properties
+              cp /tmp/xnat-conf.properties /XNAT_HOME/config/xnat-conf.properties
               # Guarantee a trailing newline before appending: without it the
               # echo below glues xnat.is_primary_node onto the last property of
               # the source file (e.g. "...=truexnat.is_primary_node=true"),
               # which Spring then fails to parse and the webapp never deploys.
-              [ "$(tail -c 1 ${XNAT_HOME}/config/xnat-conf.properties)" = "" ] || echo "" >> ${XNAT_HOME}/config/xnat-conf.properties
+              [ "$(tail -c 1 /XNAT_HOME/config/xnat-conf.properties)" = "" ] || echo "" >> /XNAT_HOME/config/xnat-conf.properties
               {{- if .Values.cnpg.cluster.credentials.externalSecret }}
               # Datasource password is sourced at runtime from the external
               # secret (via XNAT_DB_PASSWORD) so it stays out of the rendered
               # config Secret. Everything that touches the password runs inside
-              # the { set +x; } window so the script's top-level `set -x` does
+              # the { set +x; } window so the script's top-level `set -ex` does
               # not echo it to the pod log; do not reference XNAT_DB_PASSWORD
               # after `set -x` resumes. printf %s handles any special chars.
               { set +x; } 2>/dev/null
@@ -422,19 +423,16 @@ spec:
                 echo "ERROR: externalSecret {{ .Values.cnpg.cluster.credentials.externalSecret }} key {{ .Values.cnpg.cluster.credentials.externalSecretPasswordKey | default "password" }} is empty or missing" >&2
                 exit 1
               fi
-              printf 'datasource.password=%s\n' "${XNAT_DB_PASSWORD}" >> ${XNAT_HOME}/config/xnat-conf.properties
+              printf 'datasource.password=%s\n' "${XNAT_DB_PASSWORD}" >> /XNAT_HOME/config/xnat-conf.properties
               set -x
               {{- end }}
               if [[ "${REP[-1]}" -eq "0" ]]; then
-                echo "xnat.is_primary_node=true" >> ${XNAT_HOME}/config/xnat-conf.properties
+                echo "xnat.is_primary_node=true" >> /XNAT_HOME/config/xnat-conf.properties
               else
-                echo "xnat.is_primary_node=false" >> ${XNAT_HOME}/config/xnat-conf.properties
+                echo "xnat.is_primary_node=false" >> /XNAT_HOME/config/xnat-conf.properties
               fi
-              echo "node.id=$(hostname)" > ${XNAT_HOME}/config/node-conf.properties
-              # Copy XNAT_HOME directory excluding the plugins folder
-              cp -r --preserve=mode,timestamps ${XNAT_HOME}/!(plugins) /XNAT_HOME
+              echo "node.id=$(hostname)" > /XNAT_HOME/config/node-conf.properties
               # See the /TOMCAT chown above: root-only, so non-root images skip it.
-              # (A no-op `if` also keeps home-init's exit code 0 when non-root.)
               if [ "$(id -u)" = "0" ]; then
                 chown -R {{ default "1000" .Values.securityContext.runAsUser }} /XNAT_HOME
                 chown -R {{ default "1000" .Values.securityContext.runAsUser }} /HOME-PLUGINS
@@ -444,7 +442,7 @@ spec:
             valueFrom:
               fieldRef:
                 apiVersion: v1
-                fieldPath: metadata.name           
+                fieldPath: metadata.name
           {{- if .Values.cnpg.cluster.credentials.externalSecret }}
           - name: XNAT_DB_PASSWORD
             valueFrom:
