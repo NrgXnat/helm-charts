@@ -25,7 +25,7 @@ type: application
 # from the conventional-commit history, so leave it alone and let your commit
 # subjects decide: feat: -> minor, fix:/chore: -> patch, a ! subject or a
 # BREAKING CHANGE footer -> major.
-version: 3.1.0
+version: 3.1.1
 
 # This is the version number of the application being deployed. This version number should be
 # incremented each time you make changes to the application. Versions are not expected to
