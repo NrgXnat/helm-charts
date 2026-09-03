@@ -1,3 +1,5 @@
+{{/* Validate every pluginInstaller.credentials entry, matched by a plugin or not. */}}
+{{- include "xnat.assertCredentials" . -}}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -242,6 +244,7 @@ spec:
         # home-plugins volume, on a stock curl image -- no custom installer image,
         # same as the s3 form above. Coordinates and urls are both resolved while
         # rendering, so the url actually fetched is visible here.
+        {{- $fetch := dict "plugin" $c "name" $plugin "repo" $.Values.pluginRepository "caCert" (and $.Values.pluginInstaller.caCertSecret (ne $c.source "file")) "installer" $.Values.pluginInstaller }}
         - name: {{ $plugin }}
           image: {{ $.Values.pluginInstaller.image | quote }}
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
@@ -250,7 +253,10 @@ spec:
           command: ['sh', '-c']
           args:
             - |
-              {{- include "xnat.pluginFetch" (dict "plugin" $c "name" $plugin "repo" $.Values.pluginRepository "caCert" (and $.Values.pluginInstaller.caCertSecret (ne $c.source "file"))) | nindent 14 }}
+              {{- include "xnat.pluginFetch" $fetch | nindent 14 }}
+          {{- with include "xnat.pluginCredentialEnv" $fetch }}
+          {{- . | nindent 10 }}
+          {{- end }}
           volumeMounts:
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
