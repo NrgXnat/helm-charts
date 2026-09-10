@@ -232,26 +232,15 @@ envFrom:
 
 {{/*
 Index into pluginInstaller.credentials of the entry that authenticates this
-plugin's fetch, or "" when none does.
+plugin's fetch, or "" when none does; first match in list order wins.
 
-The entry is chosen by matching its matchPrefixes against the *resolved* url --
-after any pluginRepository.baseUrl rewrite. Matching the resolved url is what keeps
-a credential from leaking: a url the mirror rewrite has moved onto Nexus no longer
-matches its origin's prefix, so the mirror is fetched unauthenticated rather than
-being handed the origin's token, and a plugin published on an unlisted host never
-sees a credential at all.
-
-First match in list order wins, so a narrow prefix placed above a broad one
-overrides it. `source: file` never matches -- it copies a mounted jar and opens no
-connection.
-
-A plain prefix test, so its safety rests on the prefix: xnat.assertCredentials
-requires each one to be https and to run past its host's `/`, which is what keeps a
-cleartext url and a lookalike host from matching.
+Matched against the *resolved* url, after any pluginRepository.baseUrl rewrite, so
+a mirror is never handed the origin's token. `source: file` opens no connection and
+never matches. A plain prefix test, only as safe as the prefix -- hence the https
+and past-the-host `/` rules in xnat.assertCredentials.
 
 Takes the same dict as xnat.pluginArtifactUrl, plus `installer`
-(.Values.pluginInstaller) and optionally `url` (the already-resolved url, to save
-resolving it again).
+(.Values.pluginInstaller) and optionally `url` (already resolved, to save the work).
 */}}
 {{- define "xnat.pluginCredentialIndex" -}}
 {{- $creds := (.installer | default dict).credentials | default list -}}
@@ -272,14 +261,10 @@ resolving it again).
 {{/*
 The matched credential's headers as curl flags.
 
-A header taking `valueFrom` is rendered as a shell expansion of the PLUGIN_CRED_<n>
-variable xnat.pluginCredentialEnv binds to the Secret key, so the credential itself
-never appears in the manifest, only the variable's name. The expansion sits inside
-double quotes, where the shell does not re-parse the value, so a password holding
-quotes or spaces survives intact.
-
-Redirect handling is decided separately, by xnat.pluginCurlRedirect; the headers
-are validated up front by xnat.assertCredentials.
+A `valueFrom` header renders as an expansion of the PLUGIN_CRED_<n> variable
+xnat.pluginCredentialEnv binds to the Secret key, so only the variable's name
+reaches the manifest. It sits inside double quotes, which the shell does not
+re-parse, so quotes and spaces in the value survive.
 
 Same dict as xnat.pluginCredentialIndex.
 */}}
@@ -301,15 +286,12 @@ Same dict as xnat.pluginCredentialIndex.
 Redirect flags for a plugin fetch: `-L`, or `-L --max-redirs 0` when following a
 redirect would hand the credential to another host.
 
-Since 7.58 curl drops a custom Authorization header (and Cookie) on a cross-host
-redirect, which is what lets an artifact API hop authenticate and its pre-signed CDN
-hop not. No other header name gets that treatment -- PRIVATE-TOKEN (GitLab),
-X-JFrog-Art-Api (Artifactory) -- so a fetch whose credential is a Secret under one
-of those refuses the redirect: `--max-redirs 0` fails with exit 47 before the second
-request, where dropping -L would instead write the redirect's body into the jar.
-`followRedirects` on the entry overrides either way. Only `valueFrom` counts as a
-credential here; a literal `value` is in the manifest in the clear already. See
-examples/xnat/pluginCredentials.yml.
+Since 7.58 curl drops Authorization (and Cookie) on a cross-host redirect, but no
+other header name -- so a Secret sent as PRIVATE-TOKEN or X-JFrog-Art-Api would
+ride the redirect. Those fetches refuse it instead: `--max-redirs 0` fails with
+exit 47 before the second request, where dropping -L would write the redirect's
+body into the jar. `followRedirects` overrides either way; only `valueFrom` counts
+as a credential. See examples/xnat/pluginCredentials.yml.
 
 Same dict as xnat.pluginCredentialIndex.
 */}}
@@ -332,18 +314,13 @@ Same dict as xnat.pluginCredentialIndex.
 {{- end -}}
 
 {{/*
-PLUGIN_CRED_<n> environment variables binding the matched credential's valueFrom
-headers to their Secret keys, for the init containers whose url matched. Nothing is
-rendered for the others, so a plugin fetched from elsewhere never carries a
-credential in its environment.
+PLUGIN_CRED_<n> variables binding the matched credential's `valueFrom` headers to
+their Secret keys. Nothing is rendered for a fetch that matched no entry, or whose
+entry is all literal headers.
 
-Emits nothing at all when the matched entry is made up entirely of literal headers,
-which need no Secret.
-
-The secretKeyRefs are deliberately not `optional` -- a missing Secret or key holds
-the pod at CreateContainerConfigError naming what it could not find, which is a
-clearer failure than an init container that starts and takes a 401 (or, worse, one
-whose url is public enough to quietly succeed unauthenticated).
+The secretKeyRefs are deliberately not `optional`: a missing Secret or key holds
+the pod at CreateContainerConfigError naming what it could not find, rather than
+starting an init container that takes a 401 -- or quietly succeeds unauthenticated.
 
 Same dict as xnat.pluginCredentialIndex.
 */}}
@@ -371,9 +348,8 @@ env:
 {{/*
 Rejects a malformed pluginInstaller.credentials entry.
 
-Runs over every entry, not just the ones a plugin's url matches today, so a mistake
-fails `helm lint` when it is written rather than when someone later adds the plugin
-whose url first matches it.
+Runs over every entry, not just those a plugin matches today, so a mistake fails
+`helm lint` when it is written rather than when a later plugin first matches it.
 
 Takes the root context.
 */}}
@@ -412,14 +388,11 @@ Takes the root context.
 {{/*
 Rejects a credentials header the init container's shell could not carry verbatim.
 
-The header name and any literal value are rendered straight into the fetch script,
-so a quote or a newline in either would end the -H argument early and hand the rest
-of the string to the shell as code. They are refused here, while rendering, rather
-than producing an init container that fails obscurely or does something
-unintended. A literal that is not a string is refused too -- it would otherwise
-reach xnat.pluginCredentialFlags' `%s` as Go's `%!s(float64=2)`. Values arriving
-from a Secret are exempt: they reach curl through a variable expansion the shell
-does not re-parse.
+The name and any literal value render straight into the fetch script, so a quote or
+newline would end the -H argument early and hand the rest to the shell as code, and
+a non-string literal would reach `%s` as `%!s(float64=2)`. Refused here rather than
+failing obscurely in the container. `valueFrom` values are exempt -- they arrive by
+a variable expansion the shell does not re-parse.
 
 Takes a dict of `header` and `at` (where it sits in the values, for the message).
 */}}

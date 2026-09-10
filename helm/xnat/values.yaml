@@ -479,18 +479,17 @@ pluginInstaller:
   # Request headers for plugins that live somewhere private -- a GitHub bot
   # token, a Nexus/Artifactory login, a GitLab job token. Each entry pairs url
   # prefixes with the headers to send when a `source: url` or
-  # `source: coordinates` fetch matches one; first match wins, and a plugin on an
-  # unlisted host is fetched with no credential at all. Prefixes match the url
-  # actually fetched, i.e. after any pluginRepository.baseUrl rewrite.
+  # `source: coordinates` fetch matches; first match wins, and a plugin on an
+  # unlisted host is fetched with no credential. Prefixes match the url actually
+  # fetched, i.e. after any pluginRepository.baseUrl rewrite.
   #
   # `valueFrom` keeps the credential out of the rendered manifest; `value` is a
-  # literal, for the non-secret headers a private API wants alongside it. A
-  # Secret sent under a header other than `Authorization` refuses redirects,
-  # since curl would carry it to the redirect target -- `followRedirects: true`
+  # literal. A Secret under a header other than `Authorization` refuses
+  # redirects, since curl would carry it to the target; `followRedirects: true`
   # allows them anyway.
   #
-  # Worked examples, the rules a prefix has to satisfy, and the url form a
-  # private GitHub release asset takes: examples/xnat/pluginCredentials.yml
+  # Worked examples and the rules a prefix must satisfy:
+  # examples/xnat/pluginCredentials.yml
   credentials: []
   #  - matchPrefixes: [https://api.github.com/]
   #    headers:
