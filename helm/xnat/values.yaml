@@ -202,6 +202,86 @@ ingress:
 #      hosts:
 #        - xnat.local
 
+# Tomcat's view of the world when something in front of it terminates TLS.
+#
+# TLS ends at the proxy (the Ingress above, an ALB, an nginx) and Tomcat is
+# only ever reached over plain HTTP on 8080. Tomcat has no way to know better:
+# request.getScheme() returns "http", getServerPort() returns 8080, and every
+# absolute URL XNAT builds from the request -- redirects, the saved-request
+# target after login, the login entry point -- comes out as
+# http://<backend>:8080/... .
+#
+# That used to be merely ugly, because browsers followed the redirect anyway.
+# XNAT 1.10.1 sends `Content-Security-Policy: form-action 'self'`, and browsers
+# enforce form-action across the whole redirect chain of a form submission: an
+# https:// page whose login POST redirects to http:// is blocked client-side.
+# The login itself succeeds; the user is simply never sent onward.
+#
+# The catch is that the pod is not only reached through the proxy. The
+# container service, JupyterHub, smoke and configuration jobs, monitoring
+# probes and sibling XNAT nodes talk to the Service directly over plain HTTP,
+# and for them http://xnat.<ns>.svc:80 is the truth. Anything that rewrites
+# their requests too is a regression, so the default fixes the browser path
+# without touching theirs.
+tomcat:
+  proxy:
+    # How Tomcat is told the public scheme, host and port.
+    #
+    #   forwardedHeaders -- (default) a RemoteIpValve on the Engine. It rewrites
+    #       only requests that actually arrive from a trusted proxy carrying
+    #       X-Forwarded-Proto; a request that did not come through the proxy is
+    #       left exactly as it is. In-cluster callers keep http, isSecure()
+    #       false, the Service hostname, and a session cookie WITHOUT the Secure
+    #       flag they could not send back over plain HTTP. It also needs no
+    #       hostname -- the browser's Host header already carries it -- so it
+    #       works with any ingress, including one this chart does not render.
+    #       nginx-ingress, ALB, Traefik and the common Gateway API
+    #       implementations all send the header. Inert when nothing does, so it
+    #       is safe to leave on.
+    #
+    #   connector -- scheme/secure/proxyName/proxyPort on the Connector itself.
+    #       Deterministic, independent of what the proxy sends and unspoofable,
+    #       but UNCONDITIONAL: every request is reported as https on the public
+    #       host, in-cluster ones included, and every session cookie is marked
+    #       Secure. A client that honours that flag then cannot send the cookie
+    #       back over http, so in-cluster logins break. Use it only where the
+    #       proxy cannot be made to send X-Forwarded-Proto and nothing talks to
+    #       the Service directly. Requires a hostname (`host` below, else one
+    #       borrowed from the Ingress this chart renders).
+    #
+    #   none -- patch nothing.
+    mode: forwardedHeaders
+
+    # --- forwardedHeaders only ---------------------------------------------
+    # Which source addresses are trusted to have set the headers. Empty means
+    # Tomcat's own default, which already covers RFC1918, CGNAT (100.64/10, so
+    # EKS secondary CIDRs), loopback, IPv6 link-local and IPv6 ULA -- i.e. every
+    # ordinary cluster. Set it when the proxy reaches the pod from outside all
+    # of those: a globally routable IPv6 pod CIDR, or a proxy outside the VPC.
+    # A Java regex matched against the address, NOT a CIDR list. If it does not
+    # match, the headers are ignored and the login redirect breaks again.
+    internalProxies: ""
+    # The header the proxy states the client's protocol in. Only change it for
+    # a proxy that uses a different one (e.g. X-Forwarded-Protocol).
+    protocolHeader: X-Forwarded-Proto
+
+    # --- connector only -----------------------------------------------------
+    # Public hostname browsers use. Empty means "take it from the Ingress this
+    # chart renders" -- the first host of the first ingress.tls entry, else the
+    # first ingress rule host. Neither exists for a bring-your-own-ingress
+    # deployment, so set it here. Rendering fails if neither is available.
+    host: ""
+    # Public port the proxy listens on, and the scheme it serves. `secure` is
+    # derived from the scheme (https -> true), so there is nothing to keep in
+    # sync. scheme: http is only meaningful for a proxy that does NOT terminate
+    # TLS but does change the host or port.
+    port: 443
+    scheme: https
+
+# Note on both mechanisms: this is deliberately not XNAT's siteUrl preference,
+# which is what the container service hands containers as XNAT_HOST. That is
+# configured separately and is unaffected by either mode here.
+
 hostAliases: null
 
 # XNAT is a memory-hungry Tomcat app. These requests give the pod a Burstable

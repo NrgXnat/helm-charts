@@ -1,0 +1,19 @@
+# `connector` proxy mode with the hostname left empty on purpose, so this
+# covers the other branch of the host lookup: borrowing it from the Ingress
+# this chart renders (ingress.tls first, then ingress.hosts). Pairs with
+# ci/proxy-connector-values.yaml, which sets it explicitly.
+cnpg:
+  cluster:
+    credentials:
+      password: "ci-only-placeholder"
+ingress:
+  enabled: true
+  hosts:
+    - host: xnat.example.org
+  tls:
+    - secretName: xnat-tls
+      hosts:
+        - xnat.example.org
+tomcat:
+  proxy:
+    mode: connector

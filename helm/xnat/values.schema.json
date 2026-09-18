@@ -81,6 +81,24 @@
       "additionalProperties": true,
       "properties": { "enabled": { "type": "boolean" } }
     },
+    "tomcat": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "proxy": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "mode": { "type": "string", "enum": ["forwardedHeaders", "connector", "none"] },
+            "internalProxies": { "type": "string" },
+            "protocolHeader": { "type": "string" },
+            "host": { "type": "string" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "scheme": { "type": "string", "enum": ["http", "https"] }
+          }
+        }
+      }
+    },
     "serviceAccount": {
       "type": "object",
       "additionalProperties": true,

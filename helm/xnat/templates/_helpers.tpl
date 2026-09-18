@@ -110,6 +110,114 @@ Either or both may contribute; the result is space-joined and may be empty.
 {{- $opts | join " " -}}
 {{- end -}}
 {{/*
+Public hostname off the chart's own Ingress TLS block, or "".
+*/}}
+{{- define "xnat.ingressTlsHost" -}}
+{{- $host := "" -}}
+{{- if .Values.ingress.enabled -}}
+{{- range .Values.ingress.tls -}}
+{{- if and (not $host) .hosts -}}
+{{- $host = (first .hosts) | toString -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $host -}}
+{{- end -}}
+
+{{/*
+Public hostname off the chart's own Ingress rules, or "".
+*/}}
+{{- define "xnat.ingressHost" -}}
+{{- $host := "" -}}
+{{- if .Values.ingress.enabled -}}
+{{- range .Values.ingress.hosts -}}
+{{- if and (not $host) .host -}}
+{{- $host = .host | toString -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $host -}}
+{{- end -}}
+
+{{/*
+How home-init should teach Tomcat the public scheme/host/port, validated:
+forwardedHeaders (default), connector, or none. See the tomcat.proxy block in
+values.yaml for what each one does to a request that did NOT come through the
+proxy -- that difference is the whole reason there are two.
+*/}}
+{{- define "xnat.tomcatProxyMode" -}}
+{{- $mode := .Values.tomcat.proxy.mode | default "forwardedHeaders" | toString -}}
+{{- if not (has $mode (list "forwardedHeaders" "connector" "none")) -}}
+{{- fail (printf "tomcat.proxy.mode: %q is not forwardedHeaders, connector or none" $mode) -}}
+{{- end -}}
+{{- $mode -}}
+{{- end -}}
+
+{{/*
+The RemoteIpValve, as one XML element. It rewrites scheme, isSecure() and the
+server port for requests that arrive from a trusted proxy carrying the protocol
+header, and leaves every other request alone -- which is what keeps in-cluster
+callers of the Service (container service, JupyterHub, smoke jobs, probes)
+working exactly as they did. The hostname needs no configuring: the browser's
+Host header already carries it through the proxy.
+
+internalProxies is omitted unless set, so Tomcat's own default applies; that
+default already covers RFC1918, CGNAT 100.64/10, loopback, IPv6 link-local and
+IPv6 ULA.
+*/}}
+{{- define "xnat.tomcatProxyValve" -}}
+{{- $p := .Values.tomcat.proxy -}}
+{{- $header := $p.protocolHeader | default "X-Forwarded-Proto" | toString -}}
+{{- if not (regexMatch "^[A-Za-z0-9-]+$" $header) -}}
+{{- fail (printf "tomcat.proxy.protocolHeader: %q is not an HTTP header name" $header) -}}
+{{- end -}}
+{{- $internal := $p.internalProxies | default "" | toString -}}
+{{- if regexMatch "[\"'<>&\n]" $internal -}}
+{{- fail "tomcat.proxy.internalProxies: a quote, angle bracket, ampersand or newline cannot be carried into the XML attribute (it is a Java regex, so backslashes are fine)" -}}
+{{- end -}}
+<Valve className="org.apache.catalina.valves.RemoteIpValve" protocolHeader="{{ $header }}" portHeader="X-Forwarded-Port"{{ with $internal }} internalProxies="{{ . }}"{{ end }} />
+{{- end -}}
+
+{{/*
+The public hostname for connector mode: tomcat.proxy.host, else the chart's own
+ingress.tls, else its ingress rules. Empty when this chart renders no Ingress
+and none was given -- the bring-your-own-ingress case, where only
+tomcat.proxy.host can supply it. forwardedHeaders mode needs none of this.
+*/}}
+{{- define "xnat.tomcatProxyHost" -}}
+{{- or (.Values.tomcat.proxy.host | default "") (include "xnat.ingressTlsHost" .) (include "xnat.ingressHost" .) -}}
+{{- end -}}
+
+{{/*
+The Connector attributes for connector mode, as one XML attribute string.
+scheme/secure make request.getScheme()/isSecure() report the public protocol;
+proxyName/proxyPort make getServerName()/getServerPort() report the public host
+and port. Unconditional -- see the values.yaml caveat about in-cluster callers.
+
+Every value is validated here: it is interpolated into a shell string in
+home-init, so a value carrying a quote or a space has to fail the render rather
+than reach the pod.
+*/}}
+{{- define "xnat.tomcatProxyAttrs" -}}
+{{- $host := include "xnat.tomcatProxyHost" . -}}
+{{- if not $host -}}
+{{- fail "tomcat.proxy.mode is connector but no public hostname is known: set tomcat.proxy.host. The chart can only infer one from an Ingress it renders itself (ingress.tls, else ingress.hosts), so a bring-your-own-ingress deployment has to name it." -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$" $host) -}}
+{{- fail (printf "tomcat.proxy.host: %q is not a hostname (it is also interpolated into a shell string, so it may contain only letters, digits, dots and hyphens)" $host) -}}
+{{- end -}}
+{{- $scheme := .Values.tomcat.proxy.scheme | default "https" | toString -}}
+{{- if not (has $scheme (list "http" "https")) -}}
+{{- fail (printf "tomcat.proxy.scheme: %q is not http or https" $scheme) -}}
+{{- end -}}
+{{- $port := int (.Values.tomcat.proxy.port | default 443) -}}
+{{- if or (lt $port 1) (gt $port 65535) -}}
+{{- fail (printf "tomcat.proxy.port: %d is not a TCP port" $port) -}}
+{{- end -}}
+scheme="{{ $scheme }}" secure="{{ eq $scheme "https" }}" proxyName="{{ $host }}" proxyPort="{{ $port }}"
+{{- end -}}
+
+{{/*
 Validated parts of a Maven coordinate, groupId:artifactId:version[:packaging[:classifier]],
 emitted space-separated as "group artifact version packaging classifier". packaging
 defaults to jar; an absent classifier is emitted as "-" so callers always get five

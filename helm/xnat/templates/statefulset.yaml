@@ -396,6 +396,71 @@ spec:
               # Copy Tomcat folder
               if [ -d /TOMCAT ]; then
                 cp -r --preserve=mode,timestamps /usr/local/tomcat/* /TOMCAT
+                {{- $proxyMode := include "xnat.tomcatProxyMode" . }}
+                {{- if ne $proxyMode "none" }}
+                # Behind a TLS-terminating proxy, Tomcat still sees plain HTTP on
+                # 8080, so every absolute URL XNAT builds from a request --
+                # redirects, the saved-request target after login, the login entry
+                # point -- comes out http://<backend>:8080/... . XNAT 1.10.1 sends
+                # `Content-Security-Policy: form-action 'self'`, which browsers
+                # enforce across a form submission's whole redirect chain, so that
+                # http:// hop is now blocked client-side and the user is never sent
+                # on after logging in. See tomcat.proxy in values.yaml.
+                {{- if eq $proxyMode "forwardedHeaders" }}
+                # A RemoteIpValve rewrites ONLY requests that reach Tomcat from a
+                # trusted proxy carrying the protocol header. Requests that did not
+                # come through the proxy -- the container service, JupyterHub, smoke
+                # and configuration jobs, monitoring probes, sibling nodes, all of
+                # which talk to the Service directly over plain HTTP -- are left
+                # untouched, keeping http, isSecure() false, the Service hostname,
+                # and a session cookie without the Secure flag they could not send
+                # back. That is why this, and not the Connector attributes, is the
+                # default.
+                VALVE={{ include "xnat.tomcatProxyValve" . | squote }}
+                # Line the live <Engine> opening tag is on. Comment-aware: stock
+                # server.xml also ships a commented-out jvmRoute example of it.
+                mapfile -t ENGINE_LINES < <(awk '
+                  /<!--/ { comment = 1 }
+                  !comment && /^[[:space:]]*<Engine[[:space:]]/ { print NR }
+                  /-->/  { comment = 0 }
+                ' /TOMCAT/conf/server.xml)
+                if [ "${#ENGINE_LINES[@]}" -ne 1 ]; then
+                  echo "ERROR: expected exactly one live <Engine> in /TOMCAT/conf/server.xml, found ${#ENGINE_LINES[@]}." >&2
+                  echo "       This image's Tomcat config is not the stock one this patch understands." >&2
+                  echo "       Add the valve in the image instead and pass tomcat.proxy.mode=none." >&2
+                  exit 1
+                fi
+                # Spliced with head/tail rather than `sed a\`, whose append text
+                # would eat the backslashes in an internalProxies regex.
+                { head -n "${ENGINE_LINES[0]}" /TOMCAT/conf/server.xml
+                  printf '      %s\n' "$VALVE"
+                  tail -n +"$((ENGINE_LINES[0] + 1))" /TOMCAT/conf/server.xml
+                } > /TOMCAT/conf/server.xml.new
+                mv /TOMCAT/conf/server.xml.new /TOMCAT/conf/server.xml
+                {{- else }}
+                # connector mode: unconditional, so in-cluster callers of the
+                # Service see these too. Chosen explicitly; see values.yaml.
+                PROXY_ATTRS={{ include "xnat.tomcatProxyAttrs" . | squote }}
+                # Line the live Connector's opening tag is on. Comment-aware,
+                # because stock server.xml also ships commented-out example
+                # Connectors (shared executor, SSL, AJP) that must not be touched --
+                # and the shared-executor one is on 8080 as well. Attributes go
+                # straight after the tag name so this works whether the element is
+                # written on one line or spread over several.
+                mapfile -t CONNECTOR_LINES < <(awk '
+                  /<!--/ { comment = 1 }
+                  !comment && /^[[:space:]]*<Connector[[:space:]]+port="8080"/ { print NR }
+                  /-->/  { comment = 0 }
+                ' /TOMCAT/conf/server.xml)
+                if [ "${#CONNECTOR_LINES[@]}" -ne 1 ]; then
+                  echo "ERROR: expected exactly one live <Connector port=\"8080\"> in /TOMCAT/conf/server.xml, found ${#CONNECTOR_LINES[@]}." >&2
+                  echo "       This image's Tomcat config is not the stock one this patch understands." >&2
+                  echo "       Set the proxy attributes in the image instead and pass tomcat.proxy.mode=none." >&2
+                  exit 1
+                fi
+                sed -i "${CONNECTOR_LINES[0]}s|<Connector|<Connector ${PROXY_ATTRS}|" /TOMCAT/conf/server.xml
+                {{- end }}
+                {{- end }}
               fi
               # chown only when running as root. With a root-USER image, home-init
               # runs as root and must re-own the copied tree to the runtime uid.
