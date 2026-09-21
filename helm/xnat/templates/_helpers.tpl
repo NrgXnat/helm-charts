@@ -192,7 +192,7 @@ tomcat.proxy.host can supply it. forwardedHeaders mode needs none of this.
 The Connector attributes for connector mode, as one XML attribute string.
 scheme/secure make request.getScheme()/isSecure() report the public protocol;
 proxyName/proxyPort make getServerName()/getServerPort() report the public host
-and port. Unconditional -- see the values.yaml caveat about in-cluster callers.
+and port. Unconditional -- see the README.md caveat about in-cluster callers.
 
 Every value is validated here: it is interpolated into a shell string in
 home-init, so a value carrying a quote or a space has to fail the render rather

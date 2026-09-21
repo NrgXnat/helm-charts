@@ -405,7 +405,7 @@ spec:
                 # `Content-Security-Policy: form-action 'self'`, which browsers
                 # enforce across a form submission's whole redirect chain, so that
                 # http:// hop is now blocked client-side and the user is never sent
-                # on after logging in. See tomcat.proxy in values.yaml.
+                # on after logging in. See "TLS-terminating proxies" in README.md.
                 {{- if eq $proxyMode "forwardedHeaders" }}
                 # A RemoteIpValve rewrites ONLY requests that reach Tomcat from a
                 # trusted proxy carrying the protocol header. Requests that did not
@@ -439,7 +439,7 @@ spec:
                 mv /TOMCAT/conf/server.xml.new /TOMCAT/conf/server.xml
                 {{- else }}
                 # connector mode: unconditional, so in-cluster callers of the
-                # Service see these too. Chosen explicitly; see values.yaml.
+                # Service see these too. Chosen explicitly; see README.md.
                 PROXY_ATTRS={{ include "xnat.tomcatProxyAttrs" . | squote }}
                 # Line the live Connector's opening tag is on. Comment-aware,
                 # because stock server.xml also ships commented-out example
