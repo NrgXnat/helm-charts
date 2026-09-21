@@ -77,8 +77,23 @@ ordinary clusters, EKS secondary CIDRs included, are already covered), widen
 does not match, the headers are ignored and the login redirect breaks again.
 
 Neither mode touches XNAT's `siteUrl` preference, which is what the container
-service hands containers as `XNAT_HOST`; that is configured separately. See the
-`tomcat.proxy` block in `values.yaml` for the rest.
+service hands containers as `XNAT_HOST`; that is configured separately.
+
+#### `tomcat.proxy` keys
+
+| key | applies to | meaning |
+| --- | --- | --- |
+| `mode` | — | `forwardedHeaders` (default), `connector`, or `none`. |
+| `internalProxies` | `forwardedHeaders` | Source addresses trusted to have set the headers, as described above. |
+| `protocolHeader` | `forwardedHeaders` | Header the proxy states the client's protocol in. Change it only for a proxy that uses another name, e.g. `X-Forwarded-Protocol`. |
+| `host` | `connector` | Public hostname. Empty borrows it from an Ingress this chart renders — first host of the first `ingress.tls` entry, else the first `ingress.hosts` rule. |
+| `port` | `connector` | Public port the proxy listens on. |
+| `scheme` | `connector` | `https` or `http`. The Connector's `secure` is derived from it, so there is nothing to keep in sync; `http` is only meaningful for a proxy that does *not* terminate TLS but does change the host or port. |
+
+Bad values fail the render rather than reaching the pod: an unknown `mode`, a
+`connector` mode with no hostname to use, a hostname that is not a hostname, a
+`protocolHeader` that is not a header name, or an `internalProxies` regex
+carrying a character that would break out of the XML attribute.
 
 ### 3.x — recreate the StatefulSet once
 
