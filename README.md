@@ -86,14 +86,16 @@ service hands containers as `XNAT_HOST`; that is configured separately.
 | `mode` | — | `forwardedHeaders` (default), `connector`, or `none`. |
 | `internalProxies` | `forwardedHeaders` | Source addresses trusted to have set the headers, as described above. |
 | `protocolHeader` | `forwardedHeaders` | Header the proxy states the client's protocol in. Change it only for a proxy that uses another name, e.g. `X-Forwarded-Protocol`. |
-| `host` | `connector` | Public hostname. Empty borrows it from an Ingress this chart renders — first host of the first `ingress.tls` entry, else the first `ingress.hosts` rule. |
-| `port` | `connector` | Public port the proxy listens on. |
+| `host` | `connector` | Public hostname. Empty borrows the first non-wildcard host from an Ingress this chart renders — `ingress.tls` first, then the `ingress.hosts` rules. |
+| `port` | `connector` | Public port the proxy listens on. Unset follows the scheme: 443 for `https`, 80 for `http`. |
 | `scheme` | `connector` | `https` or `http`. The Connector's `secure` is derived from it, so there is nothing to keep in sync; `http` is only meaningful for a proxy that does *not* terminate TLS but does change the host or port. |
 
 Bad values fail the render rather than reaching the pod: an unknown `mode`, a
 `connector` mode with no hostname to use, a hostname that is not a hostname, a
 `protocolHeader` that is not a header name, or an `internalProxies` regex
-carrying a character that would break out of the XML attribute.
+carrying a character that would break out of the XML attribute. The checks that
+belong to a mode run when that mode is selected, so a stale value left under an
+inactive mode is ignored rather than fatal.
 
 ### 3.x — recreate the StatefulSet once
 

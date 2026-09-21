@@ -221,9 +221,10 @@ tomcat:
     protocolHeader: X-Forwarded-Proto
 
     # connector only. An empty host is borrowed from the Ingress this chart
-    # renders, and `secure` is derived from the scheme.
+    # renders; `secure` is derived from the scheme, and an unset port follows it
+    # (443 for https, 80 for http).
     host: ""
-    port: 443
+    port: null
     scheme: https
 
 hostAliases: null

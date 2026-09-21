@@ -110,28 +110,24 @@ Either or both may contribute; the result is space-joined and may be empty.
 {{- $opts | join " " -}}
 {{- end -}}
 {{/*
-Public hostname off the chart's own Ingress TLS block, or "".
+Public hostname off the Ingress this chart renders, or "": ingress.tls first,
+then the ingress rules. Wildcards are skipped wherever they appear -- both a
+wildcard certificate in ingress.tls and a wildcard rule host are legal, but
+"*.example.org" is not a name Tomcat can report, and taking one would fail the
+render even where a concrete host sits beside it.
 */}}
-{{- define "xnat.ingressTlsHost" -}}
+{{- define "xnat.ingressPublicHost" -}}
 {{- $host := "" -}}
 {{- if .Values.ingress.enabled -}}
 {{- range .Values.ingress.tls -}}
-{{- if and (not $host) .hosts -}}
-{{- $host = (first .hosts) | toString -}}
+{{- range .hosts -}}
+{{- if and (not $host) (not (contains "*" (. | toString))) -}}
+{{- $host = . | toString -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- $host -}}
-{{- end -}}
-
-{{/*
-Public hostname off the chart's own Ingress rules, or "".
-*/}}
-{{- define "xnat.ingressHost" -}}
-{{- $host := "" -}}
-{{- if .Values.ingress.enabled -}}
 {{- range .Values.ingress.hosts -}}
-{{- if and (not $host) .host -}}
+{{- if and (not $host) .host (not (contains "*" (.host | toString))) -}}
 {{- $host = .host | toString -}}
 {{- end -}}
 {{- end -}}
@@ -140,10 +136,30 @@ Public hostname off the chart's own Ingress rules, or "".
 {{- end -}}
 
 {{/*
+Shell that resolves the line number of the ONE live (uncommented) element
+matching .regex into the array .var, and fails the init container when there is
+not exactly one. Both proxy modes locate an element this way, so the comment
+state machine lives here once rather than in each branch.
+*/}}
+{{- define "xnat.liveXmlLine" -}}
+mapfile -t {{ .var }} < <(awk '
+  /<!--/ { comment = 1 }
+  !comment && /{{ .regex }}/ { print NR }
+  /-->/  { comment = 0 }
+' /TOMCAT/conf/server.xml)
+if [ "${#{{ .var }}[@]}" -ne 1 ]; then
+  echo "ERROR: expected exactly one live {{ .what }} in /TOMCAT/conf/server.xml, found ${#{{ .var }}[@]}." >&2
+  echo "       This image's Tomcat config is not the stock one this patch understands." >&2
+  echo "       {{ .remedy }} in the image instead, and pass tomcat.proxy.mode=none." >&2
+  exit 1
+fi
+{{- end -}}
+
+{{/*
 How home-init should teach Tomcat the public scheme/host/port, validated:
-forwardedHeaders (default), connector, or none. See the tomcat.proxy block in
-TLS-terminating proxies in README.md for what each one does to a request that
-did NOT come through the proxy.
+forwardedHeaders (default), connector, or none. See "TLS-terminating proxies"
+in README.md for what each one does to a request that did NOT come through the
+proxy.
 */}}
 {{- define "xnat.tomcatProxyMode" -}}
 {{- $mode := .Values.tomcat.proxy.mode | default "forwardedHeaders" | toString -}}
@@ -179,13 +195,15 @@ IPv6 ULA.
 {{- end -}}
 
 {{/*
-The public hostname for connector mode: tomcat.proxy.host, else the chart's own
-ingress.tls, else its ingress rules. Empty when this chart renders no Ingress
-and none was given -- the bring-your-own-ingress case, where only
-tomcat.proxy.host can supply it. forwardedHeaders mode needs none of this.
+The public hostname for connector mode: tomcat.proxy.host, else one borrowed
+from the Ingress this chart renders. Empty when it renders none and none was
+given -- the bring-your-own-ingress case, where only tomcat.proxy.host can
+supply it. forwardedHeaders mode needs none of this.
 */}}
 {{- define "xnat.tomcatProxyHost" -}}
-{{- or (.Values.tomcat.proxy.host | default "") (include "xnat.ingressTlsHost" .) (include "xnat.ingressHost" .) -}}
+{{- $host := .Values.tomcat.proxy.host | default "" | toString -}}
+{{- if not $host -}}{{- $host = include "xnat.ingressPublicHost" . -}}{{- end -}}
+{{- $host -}}
 {{- end -}}
 
 {{/*
@@ -206,14 +224,17 @@ than reach the pod.
 {{- if not (regexMatch "^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$" $host) -}}
 {{- fail (printf "tomcat.proxy.host: %q is not a hostname (it is also interpolated into a shell string, so it may contain only letters, digits, dots and hyphens)" $host) -}}
 {{- end -}}
+{{/* The enum is also in values.schema.json; kept here because the value is
+     interpolated into a shell word, so it must be safe even under
+     --skip-schema-validation. The port needs no such check: `int` already
+     makes it a number, and the schema bounds it. */}}
 {{- $scheme := .Values.tomcat.proxy.scheme | default "https" | toString -}}
 {{- if not (has $scheme (list "http" "https")) -}}
 {{- fail (printf "tomcat.proxy.scheme: %q is not http or https" $scheme) -}}
 {{- end -}}
-{{- $port := int (.Values.tomcat.proxy.port | default 443) -}}
-{{- if or (lt $port 1) (gt $port 65535) -}}
-{{- fail (printf "tomcat.proxy.port: %d is not a TCP port" $port) -}}
-{{- end -}}
+{{/* Default the port to match the scheme, so `scheme: http` alone does not
+     report the https port. */}}
+{{- $port := int (.Values.tomcat.proxy.port | default (ternary 443 80 (eq $scheme "https"))) -}}
 scheme="{{ $scheme }}" secure="{{ eq $scheme "https" }}" proxyName="{{ $host }}" proxyPort="{{ $port }}"
 {{- end -}}
 
