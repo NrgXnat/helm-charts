@@ -35,11 +35,11 @@ which browsers enforce across a form submission's whole redirect chain, so the
 `http://` hop is now blocked client-side: **the login succeeds and the user is
 never sent onward.**
 
-`home-init` now patches `conf/server.xml` to fix that. `tomcat.proxy.mode`
-chooses how, and the difference between the two mechanisms is entirely about
-requests that did **not** come through the proxy — the container service,
-JupyterHub, smoke and configuration jobs, monitoring probes and sibling nodes,
-all of which talk to `http://xnat.<ns>.svc` directly:
+`home-init` now configures Tomcat to fix that. `tomcat.proxy.mode` chooses how,
+and the difference between the two mechanisms is entirely about requests that
+did **not** come through the proxy — the container service, JupyterHub, smoke
+and configuration jobs, monitoring probes and sibling nodes, all of which talk
+to `http://xnat.<ns>.svc` directly:
 
 | `mode` | proxied browser request | direct in-cluster request |
 | --- | --- | --- |
@@ -51,8 +51,21 @@ all of which talk to `http://xnat.<ns>.svc` directly:
 arrives from a trusted proxy carrying `X-Forwarded-Proto`. It needs no
 configuration at all — the browser's `Host` header already carries the public
 name — so it works with any ingress, including one this chart does not render,
-and it is inert when nothing sends the header. It also puts the real client IP
-in Tomcat's access log instead of the proxy's.
+and it is inert when nothing sends the header.
+
+It is written to `conf/Catalina/localhost/context.xml.default`, a per-host
+context default that Tomcat merges into every context on the host. That file
+does not exist in stock Tomcat and `conf/Catalina` is already a volume this
+chart owns, so nothing reads or rewrites a file the image ships and the result
+does not depend on how any given image formats its `server.xml`. If an image
+names its Engine or Host something other than the stock `Catalina`/`localhost`,
+`home-init` warns and the file is simply ignored.
+
+One consequence of that placement: a context-level valve runs *after* the
+host-level `AccessLogValve`, so Tomcat's access log still records the proxy's
+address rather than the client's. `request.getRemoteAddr()` inside XNAT does see
+the real client. If you want the access log too, add a `RemoteIpValve` at the
+Engine or Host level in the image.
 
 `connector` sets `scheme`/`secure`/`proxyName`/`proxyPort` on the Connector
 itself. That is deterministic and unspoofable, but unconditional: as the table

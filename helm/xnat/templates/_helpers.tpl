@@ -136,26 +136,6 @@ render even where a concrete host sits beside it.
 {{- end -}}
 
 {{/*
-Shell that resolves the line number of the ONE live (uncommented) element
-matching .regex into the array .var, and fails the init container when there is
-not exactly one. Both proxy modes locate an element this way, so the comment
-state machine lives here once rather than in each branch.
-*/}}
-{{- define "xnat.liveXmlLine" -}}
-mapfile -t {{ .var }} < <(awk '
-  /<!--/ { comment = 1 }
-  !comment && /{{ .regex }}/ { print NR }
-  /-->/  { comment = 0 }
-' /TOMCAT/conf/server.xml)
-if [ "${#{{ .var }}[@]}" -ne 1 ]; then
-  echo "ERROR: expected exactly one live {{ .what }} in /TOMCAT/conf/server.xml, found ${#{{ .var }}[@]}." >&2
-  echo "       This image's Tomcat config is not the stock one this patch understands." >&2
-  echo "       {{ .remedy }} in the image instead, and pass tomcat.proxy.mode=none." >&2
-  exit 1
-fi
-{{- end -}}
-
-{{/*
 How home-init should teach Tomcat the public scheme/host/port, validated:
 forwardedHeaders (default), connector, or none. See "TLS-terminating proxies"
 in README.md for what each one does to a request that did NOT come through the
@@ -170,12 +150,13 @@ proxy.
 {{- end -}}
 
 {{/*
-The RemoteIpValve, as one XML element. It rewrites scheme, isSecure() and the
-server port for requests that arrive from a trusted proxy carrying the protocol
-header, and leaves every other request alone -- which is what keeps in-cluster
-callers of the Service (container service, JupyterHub, smoke jobs, probes)
-working exactly as they did. The hostname needs no configuring: the browser's
-Host header already carries it through the proxy.
+The RemoteIpValve, as one XML element, for home-init to write into a per-host
+context default. It rewrites scheme, isSecure() and the server port for requests
+that arrive from a trusted proxy carrying the protocol header, and leaves every
+other request alone -- which is what keeps in-cluster callers of the Service
+(container service, JupyterHub, smoke jobs, probes) working exactly as they did.
+The hostname needs no configuring: the browser's Host header already carries it
+through the proxy.
 
 internalProxies is omitted unless set, so Tomcat's own default applies; that
 default already covers RFC1918, CGNAT 100.64/10, loopback, IPv6 link-local and

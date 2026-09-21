@@ -205,10 +205,10 @@ ingress:
 # Tomcat sits behind a TLS-terminating proxy and is reached over plain HTTP on
 # 8080, so the absolute URLs XNAT builds come out http://<backend>:8080/... and
 # XNAT 1.10.1's form-action CSP makes the browser block the post-login redirect.
-# home-init patches conf/server.xml to fix that. The modes differ in what they
-# do to requests that did NOT come through the proxy -- the container service
-# and other in-cluster callers of the Service. Read "TLS-terminating proxies"
-# in the README before changing any of this.
+# home-init configures Tomcat to fix that. The modes differ in what they do to
+# requests that did NOT come through the proxy -- the container service and
+# other in-cluster callers of the Service. Read "TLS-terminating proxies" in
+# the README before changing any of this.
 tomcat:
   proxy:
     # forwardedHeaders (default; a RemoteIpValve, safe to leave on) | connector | none
