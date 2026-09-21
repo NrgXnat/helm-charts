@@ -142,8 +142,8 @@ Public hostname off the chart's own Ingress rules, or "".
 {{/*
 How home-init should teach Tomcat the public scheme/host/port, validated:
 forwardedHeaders (default), connector, or none. See the tomcat.proxy block in
-values.yaml for what each one does to a request that did NOT come through the
-proxy -- that difference is the whole reason there are two.
+TLS-terminating proxies in README.md for what each one does to a request that
+did NOT come through the proxy.
 */}}
 {{- define "xnat.tomcatProxyMode" -}}
 {{- $mode := .Values.tomcat.proxy.mode | default "forwardedHeaders" | toString -}}
