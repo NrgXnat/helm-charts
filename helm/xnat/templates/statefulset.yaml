@@ -408,14 +408,16 @@ spec:
                 # after the tag name, so this works whether the element is written
                 # on one line or spread over several.
                 mapfile -t CONNECTOR_LINES < <(awk '
-                  /<!--/ { comment = 1 }
-                  !comment && /^[[:space:]]*<Connector[[:space:]]+port="8080"/ { print NR }
-                  /-->/  { comment = 0 }
+                  {{- include "xnat.awkStripXmlComments" . | nindent 18 }}
+                  L ~ /^[[:space:]]*<Connector[[:space:]]+port="8080"/ { print NR }
                 ' /TOMCAT/conf/server.xml)
                 if [ "${#CONNECTOR_LINES[@]}" -ne 1 ]; then
                   echo "ERROR: expected exactly one live <Connector port=8080 ...> in /TOMCAT/conf/server.xml, found ${#CONNECTOR_LINES[@]}." >&2
-                  echo "       This image's Tomcat config is not the stock one this patch understands." >&2
-                  echo "       Set the proxy attributes in the image instead, and pass tomcat.proxy.mode=none." >&2
+                  echo "       connector mode only recognises a Connector whose port is its first" >&2
+                  echo "       attribute, so this image's server.xml may simply be written another way." >&2
+                  echo "       tomcat.proxy.mode=forwardedHeaders needs no image change and does not" >&2
+                  echo "       read server.xml at all; otherwise set the attributes in the image and" >&2
+                  echo "       pass tomcat.proxy.mode=none." >&2
                   exit 1
                 fi
                 sed -i "${CONNECTOR_LINES[0]}s|<Connector|<Connector ${PROXY_ATTRS}|" /TOMCAT/conf/server.xml
@@ -435,12 +437,19 @@ spec:
               mkdir -p /CONF_CATALINA/localhost
               printf '<Context>\n  %s\n</Context>\n' "$VALVE" > /CONF_CATALINA/localhost/context.xml.default
               # Tomcat looks for this file under conf/<Engine>/<Host>/, so it is
-              # picked up while those are the stock Catalina/localhost. A coarse
-              # check, and a warning rather than a failure: an image that names
-              # them differently just ignores the file, which is the behaviour
-              # before this chart wrote it, not a broken pod.
-              if ! grep -qE '<Engine[[:space:]][^>]*name="Catalina"' /TOMCAT/conf/server.xml ||
-                 ! grep -qE '<Host[[:space:]][^>]*name="localhost"' /TOMCAT/conf/server.xml; then
+              # picked up while those are the stock Catalina/localhost. Matched
+              # against comment-stripped text: stock server.xml ships a commented
+              # <Engine ... jvmRoute="jvm1">, which would satisfy a plain grep and
+              # silence this check in exactly the case it exists to catch. A
+              # warning rather than a failure: an image that names them
+              # differently just ignores the file, which is the behaviour before
+              # this chart wrote it, not a broken pod.
+              if ! awk '
+                {{- include "xnat.awkStripXmlComments" . | nindent 16 }}
+                L ~ /<Engine[[:space:]][^>]*name="Catalina"/ { engine = 1 }
+                L ~ /<Host[[:space:]][^>]*name="localhost"/  { host = 1 }
+                END { exit (engine && host) ? 0 : 1 }
+              ' /TOMCAT/conf/server.xml; then
                 echo "WARNING: server.xml does not look like the stock Catalina/localhost Engine/Host." >&2
                 echo "         conf/Catalina/localhost/context.xml.default may be ignored, leaving XNAT" >&2
                 echo "         building http://<backend>:8080/ URLs. Configure the valve in the image" >&2

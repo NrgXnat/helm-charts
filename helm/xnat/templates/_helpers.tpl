@@ -136,6 +136,26 @@ render even where a concrete host sits beside it.
 {{- end -}}
 
 {{/*
+An awk rule that strips XML comments, leaving the live text of the current line
+in L. Scans each line token by token, so it stays correct when <!-- and --> share
+a line in either order -- a naive line-at-a-time flag desyncs on "--> x <!--" and
+can then treat commented text as live. Both proxy modes match against L.
+*/}}
+{{- define "xnat.awkStripXmlComments" -}}
+{ L = ""; rest = $0
+  while (length(rest)) {
+    if (incomment) {
+      i = index(rest, "-->")
+      if (!i) { rest = "" } else { rest = substr(rest, i + 3); incomment = 0 }
+    } else {
+      i = index(rest, "<!--")
+      if (!i) { L = L rest; rest = "" } else { L = L substr(rest, 1, i - 1); rest = substr(rest, i + 4); incomment = 1 }
+    }
+  }
+}
+{{- end -}}
+
+{{/*
 How home-init should teach Tomcat the public scheme/host/port, validated:
 forwardedHeaders (default), connector, or none. See "TLS-terminating proxies"
 in README.md for what each one does to a request that did NOT come through the

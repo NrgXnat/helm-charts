@@ -61,11 +61,14 @@ does not depend on how any given image formats its `server.xml`. If an image
 names its Engine or Host something other than the stock `Catalina`/`localhost`,
 `home-init` warns and the file is simply ignored.
 
-One consequence of that placement: a context-level valve runs *after* the
-host-level `AccessLogValve`, so Tomcat's access log still records the proxy's
-address rather than the client's. `request.getRemoteAddr()` inside XNAT does see
-the real client. If you want the access log too, add a `RemoteIpValve` at the
-Engine or Host level in the image.
+`request.getRemoteAddr()` inside XNAT sees the real client address. Tomcat's
+access log does not, and moving the valve will not change that: Tomcat restores
+the forwarded values before access logging at every level, but
+`AccessLogValve.requestAttributesEnabled` defaults to `false`, so the log
+ignores them. Set that attribute to `true` on the `AccessLogValve` in your image
+and the log records the client, with the valve exactly where this chart puts it.
+Measured on `nrgxnat/xnat:1.10.1`: `%h` logs `127.0.0.1` by default and the
+forwarded client address once it is enabled.
 
 `connector` sets `scheme`/`secure`/`proxyName`/`proxyPort` on the Connector
 itself. That is deterministic and unspoofable, but unconditional: as the table
@@ -88,6 +91,14 @@ ranges (RFC1918, CGNAT `100.64/10`, loopback, IPv6 link-local and ULA — so
 ordinary clusters, EKS secondary CIDRs included, are already covered), widen
 `tomcat.proxy.internalProxies`, a Java regex rather than a CIDR list. If it
 does not match, the headers are ignored and the login redirect breaks again.
+
+Those defaults cover the whole pod network, so the trust boundary is any pod
+rather than the ingress: a workload in the cluster can present its own
+`X-Forwarded-For` or `X-Forwarded-Proto`. That is not a new exposure — XNAT
+already reads `X-Forwarded-For` with no trust check when recording login
+addresses — but narrowing `internalProxies` to the ingress controller's own
+range tightens both, and is worth doing on a cluster running untrusted
+workloads.
 
 Neither mode touches XNAT's `siteUrl` preference, which is what the container
 service hands containers as `XNAT_HOST`; that is configured separately.
