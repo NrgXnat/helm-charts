@@ -1,0 +1,22 @@
+# `connector` proxy mode with the hostname left empty on purpose, so this covers
+# the other branch of the lookup: borrowing it from the Ingress this chart
+# renders. The tls entry is a wildcard and the rule host is concrete, which is
+# the realistic wildcard-certificate shape and exercises both halves -- the
+# wildcard has to be skipped (it is not a name Tomcat can report) and the rule
+# host has to be reached. Pairs with ci/proxy-connector-values.yaml, which sets
+# the hostname explicitly.
+cnpg:
+  cluster:
+    credentials:
+      password: "ci-only-placeholder"
+ingress:
+  enabled: true
+  hosts:
+    - host: xnat.example.org
+  tls:
+    - secretName: wildcard-tls
+      hosts:
+        - "*.example.org"
+tomcat:
+  proxy:
+    mode: connector

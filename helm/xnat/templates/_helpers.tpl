@@ -110,6 +110,136 @@ Either or both may contribute; the result is space-joined and may be empty.
 {{- $opts | join " " -}}
 {{- end -}}
 {{/*
+Public hostname off the Ingress this chart renders, or "": ingress.tls first,
+then the ingress rules. Wildcards are skipped wherever they appear -- both a
+wildcard certificate in ingress.tls and a wildcard rule host are legal, but
+"*.example.org" is not a name Tomcat can report, and taking one would fail the
+render even where a concrete host sits beside it.
+*/}}
+{{- define "xnat.ingressPublicHost" -}}
+{{- $host := "" -}}
+{{- if .Values.ingress.enabled -}}
+{{- range .Values.ingress.tls -}}
+{{- range .hosts -}}
+{{- if and (not $host) (not (contains "*" (. | toString))) -}}
+{{- $host = . | toString -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range .Values.ingress.hosts -}}
+{{- if and (not $host) .host (not (contains "*" (.host | toString))) -}}
+{{- $host = .host | toString -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $host -}}
+{{- end -}}
+
+{{/*
+An awk rule that strips XML comments, leaving the live text of the current line
+in L. Scans each line token by token, so it stays correct when <!-- and --> share
+a line in either order -- a naive line-at-a-time flag desyncs on "--> x <!--" and
+can then treat commented text as live. Both proxy modes match against L.
+*/}}
+{{- define "xnat.awkStripXmlComments" -}}
+{ L = ""; rest = $0
+  while (length(rest)) {
+    if (incomment) {
+      i = index(rest, "-->")
+      if (!i) { rest = "" } else { rest = substr(rest, i + 3); incomment = 0 }
+    } else {
+      i = index(rest, "<!--")
+      if (!i) { L = L rest; rest = "" } else { L = L substr(rest, 1, i - 1); rest = substr(rest, i + 4); incomment = 1 }
+    }
+  }
+}
+{{- end -}}
+
+{{/*
+How home-init should teach Tomcat the public scheme/host/port, validated:
+forwardedHeaders (default), connector, or none. See "TLS-terminating proxies"
+in README.md for what each one does to a request that did NOT come through the
+proxy.
+*/}}
+{{- define "xnat.tomcatProxyMode" -}}
+{{- $mode := .Values.tomcat.proxy.mode | default "forwardedHeaders" | toString -}}
+{{- if not (has $mode (list "forwardedHeaders" "connector" "none")) -}}
+{{- fail (printf "tomcat.proxy.mode: %q is not forwardedHeaders, connector or none" $mode) -}}
+{{- end -}}
+{{- $mode -}}
+{{- end -}}
+
+{{/*
+The RemoteIpValve, as one XML element, for home-init to write into a per-host
+context default. It rewrites scheme, isSecure() and the server port for requests
+that arrive from a trusted proxy carrying the protocol header, and leaves every
+other request alone -- which is what keeps in-cluster callers of the Service
+(container service, JupyterHub, smoke jobs, probes) working exactly as they did.
+The hostname needs no configuring: the browser's Host header already carries it
+through the proxy.
+
+internalProxies is omitted unless set, so Tomcat's own default applies; that
+default already covers RFC1918, CGNAT 100.64/10, loopback, IPv6 link-local and
+IPv6 ULA.
+*/}}
+{{- define "xnat.tomcatProxyValve" -}}
+{{- $p := .Values.tomcat.proxy -}}
+{{- $header := $p.protocolHeader | default "X-Forwarded-Proto" | toString -}}
+{{- if not (regexMatch "^[A-Za-z0-9-]+$" $header) -}}
+{{- fail (printf "tomcat.proxy.protocolHeader: %q is not an HTTP header name" $header) -}}
+{{- end -}}
+{{- $internal := $p.internalProxies | default "" | toString -}}
+{{- if regexMatch "[\"'<>&\n]" $internal -}}
+{{- fail "tomcat.proxy.internalProxies: a quote, angle bracket, ampersand or newline cannot be carried into the XML attribute (it is a Java regex, so backslashes are fine)" -}}
+{{- end -}}
+<Valve className="org.apache.catalina.valves.RemoteIpValve" protocolHeader="{{ $header }}" portHeader="X-Forwarded-Port"{{ with $internal }} internalProxies="{{ . }}"{{ end }} />
+{{- end -}}
+
+{{/*
+The public hostname for connector mode: tomcat.proxy.host, else one borrowed
+from the Ingress this chart renders. Empty when it renders none and none was
+given -- the bring-your-own-ingress case, where only tomcat.proxy.host can
+supply it. forwardedHeaders mode needs none of this.
+*/}}
+{{- define "xnat.tomcatProxyHost" -}}
+{{- $host := .Values.tomcat.proxy.host | default "" | toString -}}
+{{- if not $host -}}{{- $host = include "xnat.ingressPublicHost" . -}}{{- end -}}
+{{- $host -}}
+{{- end -}}
+
+{{/*
+The Connector attributes for connector mode, as one XML attribute string.
+scheme/secure make request.getScheme()/isSecure() report the public protocol;
+proxyName/proxyPort make getServerName()/getServerPort() report the public host
+and port. Unconditional -- see the README.md caveat about in-cluster callers.
+
+Every value is validated here: it is interpolated into a shell string in
+home-init, so a value carrying a quote or a space has to fail the render rather
+than reach the pod.
+*/}}
+{{- define "xnat.tomcatProxyAttrs" -}}
+{{- $host := include "xnat.tomcatProxyHost" . -}}
+{{- if not $host -}}
+{{- fail "tomcat.proxy.mode is connector but no public hostname is known: set tomcat.proxy.host. The chart can only infer one from an Ingress it renders itself (ingress.tls, else ingress.hosts), so a bring-your-own-ingress deployment has to name it." -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$" $host) -}}
+{{- fail (printf "tomcat.proxy.host: %q is not a hostname (it is also interpolated into a shell string, so it may contain only letters, digits, dots and hyphens)" $host) -}}
+{{- end -}}
+{{/* The enum is also in values.schema.json; kept here because the value is
+     interpolated into a shell word, so it must be safe even under
+     --skip-schema-validation. The port needs no such check: `int` already
+     makes it a number, and the schema bounds it. */}}
+{{- $scheme := .Values.tomcat.proxy.scheme | default "https" | toString -}}
+{{- if not (has $scheme (list "http" "https")) -}}
+{{- fail (printf "tomcat.proxy.scheme: %q is not http or https" $scheme) -}}
+{{- end -}}
+{{/* Default the port to match the scheme, so `scheme: http` alone does not
+     report the https port. */}}
+{{- $port := int (.Values.tomcat.proxy.port | default (ternary 443 80 (eq $scheme "https"))) -}}
+scheme="{{ $scheme }}" secure="{{ eq $scheme "https" }}" proxyName="{{ $host }}" proxyPort="{{ $port }}"
+{{- end -}}
+
+{{/*
 Validated parts of a Maven coordinate, groupId:artifactId:version[:packaging[:classifier]],
 emitted space-separated as "group artifact version packaging classifier". packaging
 defaults to jar; an absent classifier is emitted as "-" so callers always get five

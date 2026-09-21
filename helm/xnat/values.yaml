@@ -202,6 +202,31 @@ ingress:
 #      hosts:
 #        - xnat.local
 
+# Tomcat sits behind a TLS-terminating proxy and is reached over plain HTTP on
+# 8080, so the absolute URLs XNAT builds come out http://<backend>:8080/... and
+# XNAT 1.10.1's form-action CSP makes the browser block the post-login redirect.
+# home-init configures Tomcat to fix that. The modes differ in what they do to
+# requests that did NOT come through the proxy -- the container service and
+# other in-cluster callers of the Service. Read "TLS-terminating proxies" in
+# the README before changing any of this.
+tomcat:
+  proxy:
+    # forwardedHeaders (default; a RemoteIpValve, safe to leave on) | connector | none
+    mode: forwardedHeaders
+
+    # forwardedHeaders only. internalProxies is a Java regex of the source
+    # addresses trusted to have set the headers; empty means Tomcat's own
+    # default, which already covers the ordinary cluster ranges.
+    internalProxies: ""
+    protocolHeader: X-Forwarded-Proto
+
+    # connector only. An empty host is borrowed from the Ingress this chart
+    # renders; `secure` is derived from the scheme, and an unset port follows it
+    # (443 for https, 80 for http).
+    host: ""
+    port: null
+    scheme: https
+
 hostAliases: null
 
 # XNAT is a memory-hungry Tomcat app. These requests give the pod a Burstable
