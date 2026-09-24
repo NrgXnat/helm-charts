@@ -30,3 +30,17 @@
   {{- end }}
 {{- end }}
 {{- end }}
+
+{{- $split := list }}
+{{- range $n := list "archive" "prearchive" "cache" }}
+{{- if (get $.Values.volumes $n).size }}{{ $split = append $split $n }}{{ end }}
+{{- end }}
+{{- if $split }}
+
+WARNING: {{ join ", " $split }} {{ if eq (len $split) 1 }}has{{ else }}have{{ end }} a separate volume.
+
+  rename(2) fails with EXDEV across mounts, so moving a session from the
+  prearchive into the archive copies every file instead of renaming it.
+  Leave archive, prearchive and cache unset so they are directories on the
+  /data/xnat mount.
+{{- end }}

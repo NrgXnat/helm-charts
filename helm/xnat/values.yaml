@@ -352,6 +352,9 @@ nfs:
   mountOptions: []
 
 volumes:
+  # archive, prearchive and cache are directories on this mount, not volumes of
+  # their own: rename(2) is EXDEV across mounts, so splitting them makes every
+  # prearchive->archive move a copy. Size accordingly -- it holds all three.
   xnatdata:
     nfs: false
     hostVolume: false
@@ -359,7 +362,8 @@ volumes:
     accessMode: ReadWriteMany
     mountPath: "/data/xnat"
     storageClass: "default"
-    size: 100Gi
+    size: 1Ti
+  # Separate by design: regenerable scratch, and often better on local disk.
   build:
     nfs: false
     hostVolume: false
@@ -368,30 +372,17 @@ volumes:
     mountPath: "/data/xnat/build"
     storageClass: "default"
     size: 100Gi
+  # size: null means no volume and no mount. Set a size to split one back out,
+  # at the cost above. Keep the mountPath if you do.
   cache:
-    nfs: false
-    hostVolume: false
-    existingClaim:
-    accessMode: ReadWriteMany
     mountPath: "/data/xnat/cache"
-    storageClass: "default"
-    size: 1Ti
+    size: null
   archive:
-    nfs: false
-    hostVolume: false
-    existingClaim:
-    accessMode: ReadWriteMany
     mountPath: "/data/xnat/archive"
-    storageClass: "default"
-    size: 100Gi
+    size: null
   prearchive:
-    nfs: false
-    hostVolume: false
-    existingClaim:
-    accessMode: ReadWriteMany
     mountPath: "/data/xnat/prearchive"
-    storageClass: "default"
-    size: 1Ti
+    size: null
 
 # Any extra volumes can be defined here and will be inserted into the chart as written
 extraVolumes: []
