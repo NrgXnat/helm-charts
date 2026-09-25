@@ -85,6 +85,7 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "keepAliveTimeout": { "type": ["integer", "null"], "minimum": -1 },
         "proxy": {
           "type": "object",
           "additionalProperties": true,

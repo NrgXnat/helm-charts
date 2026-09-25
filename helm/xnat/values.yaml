@@ -210,6 +210,10 @@ ingress:
 # other in-cluster callers of the Service. Read "TLS-terminating proxies" in
 # the README before changing any of this.
 tomcat:
+  # HTTP Connector idle keep-alive, ms. Keep it above the fronting proxy's idle timeout
+  # (ALB 60s, Traefik 90s) or reused upstream connections 502; null keeps the image's (20s).
+  keepAliveTimeout: 120000
+
   proxy:
     # forwardedHeaders (default; a RemoteIpValve, safe to leave on) | connector | none
     mode: forwardedHeaders
