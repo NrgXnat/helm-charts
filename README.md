@@ -39,7 +39,9 @@ tomcat:
 ```
 
 `null` leaves the image's value and `-1` means no timeout. An image that
-already sets `keepAliveTimeout` has it replaced. The Connector is found with the
+already sets `keepAliveTimeout` has it replaced; one written in a form
+`home-init` cannot strip (say, split across lines) is kept with a warning, and
+any `connector` mode attributes are still added. The Connector is found with the
 same comment-aware locator as `connector` mode below; if `server.xml` has no
 recognisable live `<Connector port="8080"`, `home-init` warns and leaves the
 file alone, unless `tomcat.proxy.mode=connector`, which still fails.

@@ -427,9 +427,17 @@ spec:
                   read -r C_START C_END <<< "${CONNECTOR_LINES[0]}"
                   {{- if $keepAlive }}
                   # Replace, not duplicate, an image-set keepAliveTimeout (duplicates are unparseable).
-                  sed -i -E "${C_START},${C_END}s/[[:space:]]+keepAliveTimeout=\"[^\"]*\"//" /TOMCAT/conf/server.xml
+                  sed -i -E "${C_START},${C_END}s/(^|[[:space:]]+)keepAliveTimeout[[:space:]]*=[[:space:]]*(\"[^\"]*\"|'[^']*')//" /TOMCAT/conf/server.xml
+                  if sed -n "${C_START},${C_END}p" /TOMCAT/conf/server.xml | grep -q keepAliveTimeout; then
+                    echo "WARNING: the live Connector in /TOMCAT/conf/server.xml sets keepAliveTimeout in a form home-init cannot replace; tomcat.keepAliveTimeout not applied." >&2
+                    # Keep the image's value: drop ours, always the last attr.
+                    CONNECTOR_ATTRS=${CONNECTOR_ATTRS%{{ $keepAlive | squote }}}
+                    CONNECTOR_ATTRS=${CONNECTOR_ATTRS% }
+                  fi
                   {{- end }}
-                  sed -i "${C_START}s|<Connector|<Connector ${CONNECTOR_ATTRS}|" /TOMCAT/conf/server.xml
+                  if [ -n "$CONNECTOR_ATTRS" ]; then
+                    sed -i "${C_START}s|<Connector|<Connector ${CONNECTOR_ATTRS}|" /TOMCAT/conf/server.xml
+                  fi
                 fi
                 {{- end }}
               fi
