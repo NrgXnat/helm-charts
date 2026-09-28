@@ -3,7 +3,8 @@
 # size, and a volume opting out of the keep annotation. Renders pvc.yaml's
 # claim path, statefulset.yaml's `size OR existingClaim` gating, and NOTES's
 # split warning. The upgrade guards stay inert under `helm template` because
-# .Release.IsUpgrade is false, which short-circuits ahead of any lookup.
+# .Release.IsUpgrade is false for the deletion guard, and lookup returns
+# nothing without a cluster for the resize guard, which is not upgrade-scoped.
 cnpg:
   cluster:
     credentials:

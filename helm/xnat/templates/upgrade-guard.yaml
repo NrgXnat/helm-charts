@@ -72,38 +72,44 @@ Pick one, then upgrade again.
 
       kubectl -n %s annotate pvc <name> helm.sh/resource-policy=keep
 
- 3. MOVE TO THE SINGLE MOUNT. Grow xnatdata first: it has to hold all three,
-    and 4.0.0's default is a starting point, not their sum. You will hit the
-    resize guard next, which is expected on this path -- answer it with a size
-    and allowResize, NOT by pinning xnatdata back:
+    If it is an nfs or hostVolume claim, this chart also stops rendering its
+    PersistentVolume, which nothing here checks. Annotate that too:
 
-      volumes.xnatdata.size: <big enough for all three>
-      volumes.xnatdata.allowResize: true
+      kubectl annotate pv <pv-name> helm.sh/resource-policy=keep
 
-    Then copy, and annotate LAST. The annotation is what silences this guard,
-    so annotating before the copy leaves nothing to stop an upgrade that
-    strands the data:
+ 3. MOVE TO THE SINGLE MOUNT. Do all of it outside Helm first. This guard
+    blocks every upgrade while an unannotated claim exists, and the annotation
+    is what makes upgrading safe -- so growing xnatdata through Helm before
+    the copy is not a step you can take.
+
+      # grow xnatdata in place; needs a class with allowVolumeExpansion
+      kubectl -n %s patch pvc %s-xnatdata --type merge \
+        -p '{"spec":{"resources":{"requests":{"storage":"<fits all three>"}}}}'
 
       kubectl -n %s scale statefulset %s --replicas=0
+
       # copy each claim into the matching directory of the xnatdata volume
       # with a helper pod that mounts both. Copy AS uid 1000, or chown -R
       # 1000:1000 afterwards: fsGroupChangePolicy is OnRootMismatch and the
       # xnatdata root already matches, so the kubelet will NOT relabel what
       # you put inside it, and XNAT runs as uid 1000.
-      kubectl -n %s annotate pvc %s helm.sh/resource-policy=keep   # only once the copy is verified
-      # then upgrade, and delete the orphaned claims when you are satisfied
+
+      # only once the copy is verified -- this is what silences this guard
+      kubectl -n %s annotate pvc %s helm.sh/resource-policy=keep
+
+    Then set volumes.xnatdata.size to the size you patched in and upgrade. It
+    matches the live claim by then, so the resize guard stays quiet and you do
+    not need allowResize. Delete the orphaned claims when you are satisfied.
 
     If these are NFS or hostVolume claims you must also set nfs: false /
     hostVolume: false on each, or the render fails for want of a size; for NFS
     the data also moves from <pathPrefix>/<name> to <pathPrefix>/xnatdata/<name>.
-    This chart renders their PersistentVolumes too -- annotate those as well:
-
-      kubectl annotate pv <pv-name> helm.sh/resource-policy=keep
+    Annotate their PersistentVolumes as well as their claims.
 
  4. OR LET THEM GO. If a claim holds nothing you want, delete it yourself:
     kubectl -n %s delete pvc <name>. There is no values-level opt-out; this
     guard will not help you throw data away by accident.
-` $.Release.Namespace (join "\n    " $doomed) $.Release.Namespace $.Release.Namespace (include "xnat.fullname" $) $.Release.Namespace (join " " $doomed) $.Release.Namespace) }}
+` $.Release.Namespace (join "\n    " $doomed) $.Release.Namespace $.Release.Namespace (include "xnat.fullname" $) $.Release.Namespace (include "xnat.fullname" $) $.Release.Namespace (join " " $doomed) $.Release.Namespace) }}
 {{- end }}
 {{- end }}
 

@@ -399,6 +399,15 @@ spec:
               # created each mount point.
               if [ -d /XNAT_DATA ]; then
                 mkdir -p /XNAT_DATA/archive /XNAT_DATA/prearchive /XNAT_DATA/cache
+                # fsGroup does not reach these. fsGroupChangePolicy is
+                # OnRootMismatch and the xnatdata root already matches, so the
+                # kubelet relabels nothing inside it -- under 3.x each of these
+                # was a volume root and got that treatment for free. On a root
+                # image home-init runs as root and must hand them over; on a
+                # non-root image they inherit the creating uid already.
+                if [ "$(id -u)" = "0" ]; then
+                  chown {{ default "1000" .Values.securityContext.runAsUser }} /XNAT_DATA/archive /XNAT_DATA/prearchive /XNAT_DATA/cache
+                fi
               fi
               # Copy Tomcat folder
               if [ -d /TOMCAT ]; then

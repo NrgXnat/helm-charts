@@ -362,7 +362,8 @@ volumes:
   # Changing a size here patches the request onto the live claim on upgrade,
   # which a StorageClass without allowVolumeExpansion rejects outright and
   # which is irreversible where expansion is allowed. upgrade-guard.yaml stops
-  # that happening by accident; allowResize: true means you intend it.
+  # that happening by accident; allowResize: true means you intend it, and
+  # works on any volume here, not only this one.
   xnatdata:
     nfs: false
     hostVolume: false
@@ -386,7 +387,8 @@ volumes:
     size: 100Gi
   # size: null means no volume and no mount, so each is a plain directory on
   # xnatdata. Giving one a size splits it back out into its own claim, at the
-  # cost above; the other keys stay because the claim is rendered from them.
+  # cost above; accessMode and storageClass stay because the claim is
+  # rendered from them, and mountPath because the mount is.
   # An existingClaim is mounted whether or not a size is set.
   cache:
     nfs: false

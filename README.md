@@ -42,8 +42,8 @@ That default change would otherwise resize every release that never set the
 value explicitly: Helm patches a changed request onto the bound claim, which a
 StorageClass without `allowVolumeExpansion` rejects outright — as do this
 chart's own static NFS and hostVolume PVs — and which is irreversible where
-expansion is allowed, since Kubernetes cannot shrink a claim. On upgrade the
-guard compares the rendered size against the live one for every `volumes` entry
+expansion is allowed, since Kubernetes cannot shrink a claim. The guard
+compares the rendered size against the live one for every `volumes` entry
 the chart renders a claim for, and stops if they differ, naming both values.
 (It does not cover `persistence`, whose `volumeClaimTemplates` the API server
 rejects outright as immutable.) Pin the volume to what it already has:
@@ -83,13 +83,14 @@ kubectl -n <ns> get pvc -l app.kubernetes.io/instance=<release>
 ```
 
 `templates/upgrade-guard.yaml` blocks the upgrade while any of them would be
-removed, and offers three ways forward:
+removed, and offers four ways forward:
 
 | | what to do |
 | --- | --- |
 | keep the split layout | set `volumes.<name>.size` back to the request the live claim already has, leaving its `accessMode` and `storageClass` in place |
-| adopt a claim where it is | point `volumes.<name>.existingClaim` at it **and** annotate it `helm.sh/resource-policy=keep` — an `existingClaim` is not rendered either, so the annotation is what stops Helm removing it |
+| adopt a claim where it is | point `volumes.<name>.existingClaim` at it **and** annotate it `helm.sh/resource-policy=keep` — an `existingClaim` is not rendered either, so the annotation is what stops Helm removing it. For an `nfs`/`hostVolume` claim the chart also stops rendering its PersistentVolume, which nothing checks — annotate that too |
 | move to the single mount | copy the data **before** upgrading, as below |
+| let one go | nothing you want is on it: `kubectl -n <ns> delete pvc <name>` yourself. There is no values-level opt-out |
 
 Copy before you upgrade. Afterwards `/data/xnat/archive` is an empty directory
 while the database still references every archived session, so XNAT comes up
@@ -97,19 +98,24 @@ serving a broken archive and can write new sessions into the empty tree. The
 orphaned claims are also unmounted by then, so the copy needs a helper pod that
 mounts both.
 
-Annotate **last**. The annotation is what silences the deletion guard, so
-doing it first leaves nothing to stop an upgrade that strands the data:
+Do all of it outside Helm first, then upgrade once. The deletion guard blocks
+every upgrade while an unannotated claim exists, and the annotation is what
+makes upgrading safe — so you cannot grow `xnatdata` through Helm before the
+copy, and you must not annotate before it either:
 
 ```console
+# grow xnatdata in place; needs a class with allowVolumeExpansion
+kubectl -n <ns> patch pvc <fullname>-xnatdata --type merge \
+  -p '{"spec":{"resources":{"requests":{"storage":"<fits all three>"}}}}'
+
 kubectl -n <ns> scale statefulset <fullname> --replicas=0
 # copy each claim into the matching directory of the xnatdata volume
 kubectl -n <ns> annotate pvc <claims> helm.sh/resource-policy=keep  # once verified
-# then upgrade, and delete the orphaned claims when you are satisfied
 ```
 
-You will meet the resize guard on this path, because `xnatdata` has to grow to
-hold all three. That is expected — answer it with a size and `allowResize`, not
-by pinning `xnatdata` back.
+Then set `volumes.xnatdata.size` to the size you patched in and upgrade. It
+matches the live claim by then, so the resize guard stays quiet and you do not
+need `allowResize`. Delete the orphaned claims when you are satisfied.
 
 There is no clean rollback. `helm rollback` replays a stored manifest rather
 than re-rendering, so neither guard runs: the 3.3.0 manifest requests the old
@@ -144,9 +150,10 @@ field-level diffs on resources that are still in the desired state, and a
 resource with no target manifest is a prune candidate regardless. Helm and
 Flux's helm-controller both run `lookup` and are covered.
 
-The guard also makes `get persistentvolumeclaims` in the release namespace a
-rendering prerequisite. Without that RBAC every upgrade of this chart fails
-there, including upgrades that touch no volume.
+The guards also make `get persistentvolumeclaims` in the release namespace a
+rendering prerequisite. Without that RBAC every render of this chart fails
+there — installs included, since the resize guard is not upgrade-scoped — and
+that covers renders which touch no volume at all.
 
 Two smaller changes in the same release:
 
