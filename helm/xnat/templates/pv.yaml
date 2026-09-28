@@ -1,8 +1,13 @@
 {{- $context := . -}}
 {{- range $name, $c := .Values.volumes }}
 {{- if .existingClaim }}
+{{- else }}
+{{- if and (or .nfs .hostVolume) (not $c.size) }}
+{{- fail (printf "volumes.%s: %s is true but size is unset. This chart renders the PersistentVolume itself, and capacity.storage has no default -- set volumes.%s.size." $name (ternary "nfs" "hostVolume" (not (not .nfs))) $name) }}
+{{- end }}
+{{- end }}
+{{- if .existingClaim }}
 {{- else if .nfs }}
-{{- if not $c.size }}{{ fail (printf "volumes.%s.nfs is true but volumes.%s.size is unset; an NFS PersistentVolume needs capacity.storage" $name $name) }}{{ end }}
 ---
 apiVersion: v1
 kind: PersistentVolume

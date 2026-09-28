@@ -37,10 +37,15 @@
 {{- end }}
 {{- if $split }}
 
-WARNING: {{ join ", " $split }} {{ if eq (len $split) 1 }}has{{ else }}have{{ end }} a separate volume.
+WARNING: {{ join ", " $split }} {{ if eq (len $split) 1 }}has{{ else }}have{{ end }} a volume of its own.
+{{- if or (has "archive" $split) (has "prearchive" $split) }}
 
-  rename(2) fails with EXDEV across mounts, so moving a session from the
-  prearchive into the archive copies every file instead of renaming it.
-  Leave archive, prearchive and cache unset so they are directories on the
-  /data/xnat mount.
+  archive and prearchive are now on different mounts, and rename(2) fails with
+  EXDEV across mounts -- so moving a session out of the prearchive copies every
+  file instead of renaming it.
+{{- end }}
+
+  Clear BOTH size and existingClaim on {{ join ", " $split }} to make {{ if eq (len $split) 1 }}it a
+  directory{{ else }}them directories{{ end }} on the /data/xnat mount. Either one alone still
+  mounts a separate volume.
 {{- end }}

@@ -9,10 +9,13 @@ metadata:
   name: {{ include "xnat.fullname" $context }}-{{ $name }}
   labels:
     {{- include "xnat.labels" $context | nindent 4 }}
+  {{- if ne $c.keep false }}
   annotations:
     # Outlive removal from the release: dropping a volume from values, or
-    # uninstalling, must not take the data with it.
+    # uninstalling, must not take the data with it. Opt out with keep: false
+    # on a volume whose contents are regenerable.
     helm.sh/resource-policy: keep
+  {{- end }}
 spec:
   accessModes: [ {{ $c.accessMode | quote }} ]
   volumeMode: Filesystem

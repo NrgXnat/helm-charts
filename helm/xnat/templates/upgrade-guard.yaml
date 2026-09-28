@@ -9,10 +9,19 @@ with the default reclaimPolicy: Delete the PersistentVolume, and the data, go
 with the claim.
 
 lookup returns nothing under `helm template` and client-side `--dry-run`, so
-this is inert in CI renders and on a fresh install. It fires only on a real
-upgrade of a release that still holds the old claims, and stops firing once
-they are annotated keep -- so the instructions below are followable rather
-than a wall.
+this is inert in CI renders. It does read the cluster on a real install as
+well as an upgrade. It stops firing once the claim is annotated keep, so the
+instructions below are followable rather than a wall.
+
+Two limits worth stating plainly. It covers Helm and Flux's helm-controller,
+which both run lookup; it does NOT cover a render-and-apply pipeline -- Argo
+CD, `helm template | kubectl apply --prune`, kustomize --enable-helm -- where
+lookup is empty and the keep annotation in pvc.yaml only ever lands on claims
+this chart still renders, never on the legacy ones. Those consumers get the
+prune this guard exists to prevent, unwarned. And it makes `get
+persistentvolumeclaims` in the release namespace a rendering prerequisite:
+without that RBAC, Helm surfaces the Forbidden error and every upgrade of
+this chart fails here, including upgrades that touch no volume at all.
 
 Renders no object.
 */}}
