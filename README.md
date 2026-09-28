@@ -32,12 +32,32 @@ filesystem, so a split layout turns every prearchive-to-archive move into a
 full copy. From 4.0 `archive`, `prearchive` and `cache` default to `size: null`
 and are plain directories on the `xnatdata` mount, which lets XNAT rename.
 
-Size `xnatdata` for all three. The default stays `100Gi` — smaller than 3.x's
-`archive` 100Gi plus `prearchive` 1Ti plus `cache` 1Ti — because Helm patches a
-changed request onto the live claim on upgrade, which is rejected outright on a
-class without `allowVolumeExpansion` and on this chart's own static NFS and
-hostVolume PVs, and silently grows the volume where expansion is allowed. Set
-it explicitly on a new install.
+`xnatdata` now holds all three, so its default rises from `100Gi` to `1Ti` to
+cover what 3.x split across `archive`, `prearchive` and `cache`.
+
+That default change would otherwise resize every release that never set the
+value explicitly: Helm patches a changed request onto the bound claim, which a
+StorageClass without `allowVolumeExpansion` rejects outright — as do this
+chart's own static NFS and hostVolume PVs — and which is irreversible where
+expansion is allowed, since Kubernetes cannot shrink a claim. The upgrade guard
+compares the rendered size against the live one for every claim the chart owns
+and stops the upgrade if they differ, naming both values. Pin the volume to
+what it already has:
+
+```yaml
+volumes:
+  xnatdata:
+    size: 100Gi   # whatever the live claim requests
+```
+
+To resize deliberately, say so on the volume and check the class allows it:
+
+```yaml
+volumes:
+  xnatdata:
+    size: 2Ti
+    allowResize: true
+```
 
 **Upgrading an existing release will try to delete your archive.** On 3.x the
 defaults rendered the three as claims of their own. They are no longer

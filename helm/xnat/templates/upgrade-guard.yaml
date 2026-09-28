@@ -30,6 +30,56 @@ volume at all.
 
 Renders no object.
 */}}
+{{/*
+Refuse an upgrade that would silently patch a live claim's request.
+
+Changing a size in values rewrites resources.requests.storage on the bound
+claim. A StorageClass without allowVolumeExpansion rejects that outright, and
+where expansion is allowed it succeeds and is irreversible -- Kubernetes has
+no shrink. 4.0.0 raises the xnatdata default from 100Gi to 1Ti, so every
+release that never set it explicitly would be resized tenfold by the upgrade
+alone; this is what makes raising the default safe.
+
+Compares the rendered size against the live one as strings. Two spellings of
+the same quantity (1Ti vs 1024Gi) therefore read as a change -- the remedy is
+the same either way, and it fails safe rather than silently.
+*/}}
+{{- $resized := list }}
+{{- range $name, $c := .Values.volumes }}
+{{- if and $c.size (not $c.existingClaim) (ne $c.allowResize true) }}
+{{- $claim := printf "%s-%s" (include "xnat.fullname" $) $name }}
+{{- $live := lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $claim }}
+{{- if $live }}
+{{- $was := dig "spec" "resources" "requests" "storage" "" $live }}
+{{- if and $was (ne ($was | toString) ($c.size | toString)) }}
+{{- $resized = append $resized (printf "%s: %s -> %s  (volumes.%s.size)" $claim ($was | toString) ($c.size | toString) $name) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if $resized }}
+{{- fail (printf `
+This upgrade would change the storage request on claims that already exist:
+
+    %s
+
+Kubernetes cannot shrink a claim, and a StorageClass without
+allowVolumeExpansion rejects any change at all -- so this either fails the
+upgrade or grows the volume irreversibly.
+
+If you did not mean to resize anything, you are probably hitting the 4.0.0
+default: xnatdata went from 100Gi to 1Ti, because it now holds archive,
+prearchive and cache rather than only what 3.x put on it. Pin the volume to
+what it already has:
+
+    volumes.<name>.size: <the value on the left above>
+
+If you do mean it, say so on the volume and check the class allows expansion:
+
+    volumes.<name>.allowResize: true
+` (join "\n    " $resized)) }}
+{{- end }}
+
 {{- $doomed := list }}
 {{- range $n := list "archive" "prearchive" "cache" }}
 {{- if or (dig $n "existingClaim" "" $.Values.volumes) (not (dig $n "size" "" $.Values.volumes)) }}

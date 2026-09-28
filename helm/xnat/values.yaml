@@ -354,11 +354,14 @@ nfs:
 volumes:
   # archive, prearchive and cache are directories on this mount, not volumes of
   # their own: rename(2) is EXDEV across mounts, so splitting them makes every
-  # prearchive->archive move a copy. This one volume now holds all three, so
-  # size it for their sum -- the default is deliberately NOT raised to match,
-  # because Helm patches the request onto the live claim on upgrade, which
-  # fails outright on a StorageClass without allowVolumeExpansion and silently
-  # grows the volume where expansion is allowed.
+  # prearchive->archive move a copy. This one volume holds all three, so the
+  # default covers what 3.x split across archive, prearchive and cache.
+  #
+  # Changing a size here patches the request onto the live claim on upgrade,
+  # which a StorageClass without allowVolumeExpansion rejects outright and
+  # which is irreversible where expansion is allowed. upgrade-guard.yaml stops
+  # that happening by accident; set allowResize: true on the volume to mean
+  # it.
   xnatdata:
     nfs: false
     hostVolume: false
@@ -366,7 +369,7 @@ volumes:
     accessMode: ReadWriteMany
     mountPath: "/data/xnat"
     storageClass: "default"
-    size: 100Gi
+    size: 1Ti
   # Separate by design: regenerable scratch, and often better on local disk.
   # keep: false lets `helm uninstall` reclaim it; every other volume defaults
   # to keeping its claim, so data outlives a removal from values.
