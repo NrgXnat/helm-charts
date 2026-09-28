@@ -1,0 +1,20 @@
+# Covers the nfs branch of pv.yaml: its capacity guard, the keep annotation on
+# the rendered PersistentVolume, and the <pathPrefix>/<name> layout the 4.0
+# migration note describes. No other fixture sets nfs or hostVolume.
+cnpg:
+  cluster:
+    credentials:
+      password: ci
+nfs:
+  server: nfs.example.internal
+  pathPrefix: /export/xnat
+  mountOptions:
+    - hard
+volumes:
+  xnatdata:
+    nfs: true
+    size: 1Ti
+  build:
+    nfs: true
+    size: 100Gi
+    keep: false

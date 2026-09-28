@@ -42,6 +42,13 @@ metadata:
   name: {{ include "xnat.fullname" $context }}-{{ $name }}
   labels:
     {{- include "xnat.labels" $context | nindent 4 }}
+  {{- if ne (toString $c.keep) "false" }}
+  annotations:
+    # The claim is not the only object this chart owns for an nfs/hostVolume
+    # volume. Keep the PV too, or removing the volume from values strands a
+    # kept claim against a deleted PV.
+    helm.sh/resource-policy: keep
+  {{- end }}
 spec:
   capacity:
     storage: {{ $c.size | quote }}

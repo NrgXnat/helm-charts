@@ -97,12 +97,25 @@ serving a broken archive and can write new sessions into the empty tree. The
 orphaned claims are also unmounted by then, so the copy needs a helper pod that
 mounts both.
 
+Annotate **last**. The annotation is what silences the deletion guard, so
+doing it first leaves nothing to stop an upgrade that strands the data:
+
 ```console
-kubectl -n <ns> annotate pvc <claims> helm.sh/resource-policy=keep
 kubectl -n <ns> scale statefulset <fullname> --replicas=0
 # copy each claim into the matching directory of the xnatdata volume
-# upgrade, verify, then delete the orphaned claims
+kubectl -n <ns> annotate pvc <claims> helm.sh/resource-policy=keep  # once verified
+# then upgrade, and delete the orphaned claims when you are satisfied
 ```
+
+You will meet the resize guard on this path, because `xnatdata` has to grow to
+hold all three. That is expected — answer it with a size and `allowResize`, not
+by pinning `xnatdata` back.
+
+There is no clean rollback. `helm rollback` replays a stored manifest rather
+than re-rendering, so neither guard runs: the 3.3.0 manifest requests the old
+`xnatdata` size, which the API server rejects as a shrink, and it re-creates
+the three claims as empty volumes mounted over your copied directories. Verify
+before you delete anything, and treat the orphaned claims as the rollback.
 
 Copy **as uid 1000**, or `chown -R 1000:1000` afterwards. `fsGroup: 1000` with
 `fsGroupChangePolicy: OnRootMismatch` only relabels a volume whose root GID is
@@ -145,7 +158,11 @@ Two smaller changes in the same release:
   values and `helm uninstall`. The flip side is that removing or renaming a
   volume now strands its claim rather than deleting it, and you keep paying for
   it until you remove it by hand. `build` opts out with `keep: false`, being
-  regenerable scratch; set `keep: false` on any volume you want reclaimed.
+  regenerable scratch; set `keep: false` on any volume you want reclaimed. One
+  consequence: `helm uninstall` now leaves claims behind carrying their Helm
+  ownership metadata, so a later `helm install` under the same release name
+  adopts them — which is why the resize guard runs on install too, not only on
+  upgrade.
 
 ### TLS-terminating proxies — Tomcat now reports the public URL
 

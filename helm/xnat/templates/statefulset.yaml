@@ -393,6 +393,13 @@ spec:
             - |
               set -ex
               shopt -s extglob
+              # archive, prearchive and cache are directories on the xnatdata
+              # mount rather than mounts of their own, so nothing else brings
+              # them into being -- under 3.x they existed because the kubelet
+              # created each mount point.
+              if [ -d /XNAT_DATA ]; then
+                mkdir -p /XNAT_DATA/archive /XNAT_DATA/prearchive /XNAT_DATA/cache
+              fi
               # Copy Tomcat folder
               if [ -d /TOMCAT ]; then
                 cp -r --preserve=mode,timestamps /usr/local/tomcat/* /TOMCAT
@@ -531,6 +538,10 @@ spec:
             {{- end }}
             - name: xnat-home
               mountPath: /XNAT_HOME
+            {{- if or (dig "xnatdata" "size" "" (default dict .Values.volumes)) (dig "xnatdata" "existingClaim" "" (default dict .Values.volumes)) }}
+            - name: xnatdata
+              mountPath: /XNAT_DATA
+            {{- end }}
             - name: home-plugins
               mountPath: /HOME-PLUGINS
             - name: xnat-config
