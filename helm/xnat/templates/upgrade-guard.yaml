@@ -1,0 +1,51 @@
+{{/*
+Refuse an upgrade that would delete a split archive, prearchive or cache claim.
+
+Before 4.0.0 the chart rendered <release>-xnat-{archive,prearchive,cache} as
+claims of their own. 4.0.0 makes them directories on the xnatdata mount, so
+those claims drop out of the release -- and Helm deletes what drops out unless
+the live object is annotated helm.sh/resource-policy: keep. On a StorageClass
+with the default reclaimPolicy: Delete the PersistentVolume, and the data, go
+with the claim.
+
+lookup returns nothing under `helm template` and client-side `--dry-run`, so
+this is inert in CI renders and on a fresh install. It fires only on a real
+upgrade of a release that still holds the old claims, and stops firing once
+they are annotated keep -- so the instructions below are followable rather
+than a wall.
+
+Renders no object.
+*/}}
+{{- range $n := list "archive" "prearchive" "cache" }}
+{{- if not (dig $n "size" "" $.Values.volumes) }}
+{{- $claim := printf "%s-%s" (include "xnat.fullname" $) $n }}
+{{- $live := lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $claim }}
+{{- if $live }}
+{{- if ne (dig "metadata" "annotations" "helm.sh/resource-policy" "" $live) "keep" }}
+{{- fail (printf `
+This release still has a separate %q claim, and upgrading would DELETE it.
+
+Chart 4.0.0 makes archive, prearchive and cache directories on the xnatdata
+mount, so %q is no longer part of the release. Helm removes what leaves a
+release, and on a StorageClass with reclaimPolicy: Delete that destroys the
+PersistentVolume and everything in it.
+
+Pick one, then upgrade again:
+
+ 1. Keep the split layout -- set volumes.%s.size back to this release's
+    current request (and leave its accessMode and storageClass in place).
+    Moving a session from the prearchive to the archive stays a copy rather
+    than a rename, which is why it is no longer the default.
+
+ 2. Adopt the single mount -- detach the claims so Helm cannot remove them:
+
+      kubectl -n %s annotate pvc %s helm.sh/resource-policy=keep
+
+    then upgrade, copy the data into the xnatdata volume, and delete the
+    orphaned claims yourself once you have verified the move.
+
+` $claim $claim $n $.Release.Namespace $claim) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

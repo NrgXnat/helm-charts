@@ -372,16 +372,33 @@ volumes:
     mountPath: "/data/xnat/build"
     storageClass: "default"
     size: 100Gi
-  # size: null means no volume and no mount. Set a size to split one back out,
-  # at the cost above. Keep the mountPath if you do.
+  # size: null means no volume and no mount, so each is a plain directory on
+  # xnatdata. Giving one a size splits it back out into its own claim, at the
+  # cost above; the other keys stay because the claim is rendered from them.
+  # An existingClaim is mounted whether or not a size is set.
   cache:
+    nfs: false
+    hostVolume: false
+    existingClaim:
+    accessMode: ReadWriteMany
     mountPath: "/data/xnat/cache"
+    storageClass: "default"
     size: null
   archive:
+    nfs: false
+    hostVolume: false
+    existingClaim:
+    accessMode: ReadWriteMany
     mountPath: "/data/xnat/archive"
+    storageClass: "default"
     size: null
   prearchive:
+    nfs: false
+    hostVolume: false
+    existingClaim:
+    accessMode: ReadWriteMany
     mountPath: "/data/xnat/prearchive"
+    storageClass: "default"
     size: null
 
 # Any extra volumes can be defined here and will be inserted into the chart as written

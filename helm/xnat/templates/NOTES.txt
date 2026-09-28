@@ -33,7 +33,7 @@
 
 {{- $split := list }}
 {{- range $n := list "archive" "prearchive" "cache" }}
-{{- if (get $.Values.volumes $n).size }}{{ $split = append $split $n }}{{ end }}
+{{- if or (dig $n "size" "" $.Values.volumes) (dig $n "existingClaim" "" $.Values.volumes) }}{{ $split = append $split $n }}{{ end }}
 {{- end }}
 {{- if $split }}
 
