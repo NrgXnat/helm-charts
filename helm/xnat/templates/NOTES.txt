@@ -37,7 +37,7 @@
 {{- end }}
 {{- if $split }}
 
-WARNING: {{ join ", " $split }} {{ if eq (len $split) 1 }}has{{ else }}have{{ end }} a volume of its own.
+WARNING: {{ join ", " $split }} {{ if eq (len $split) 1 }}has a volume of its own{{ else }}have volumes of their own{{ end }}.
 {{- if or (has "archive" $split) (has "prearchive" $split) }}
 
   archive and prearchive are now on different mounts, and rename(2) fails with
@@ -45,7 +45,7 @@ WARNING: {{ join ", " $split }} {{ if eq (len $split) 1 }}has{{ else }}have{{ en
   file instead of renaming it.
 {{- end }}
 
-  Clear BOTH size and existingClaim on {{ join ", " $split }} to make {{ if eq (len $split) 1 }}it a
-  directory{{ else }}them directories{{ end }} on the /data/xnat mount. Either one alone still
-  mounts a separate volume.
+  Clear BOTH size and existingClaim on {{ join ", " $split }} to make
+  {{ if eq (len $split) 1 }}it a directory{{ else }}them directories{{ end }} on the {{ .Values.volumes.xnatdata.mountPath }} mount.
+  Either one alone still mounts a separate volume.
 {{- end }}

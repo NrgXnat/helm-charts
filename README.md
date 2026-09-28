@@ -32,45 +32,74 @@ filesystem, so a split layout turns every prearchive-to-archive move into a
 full copy. From 4.0 `archive`, `prearchive` and `cache` default to `size: null`
 and are plain directories on the `xnatdata` mount, which lets XNAT rename.
 
-**Upgrading an existing release will try to delete your archive.** On 3.x the
-defaults render `<release>-xnat-archive`, `-prearchive` and `-cache` as claims
-of their own. They are no longer rendered, and Helm deletes what leaves a
-release. On a StorageClass with the default `reclaimPolicy: Delete`, the
-PersistentVolume and its contents go with the claim.
+Size `xnatdata` for all three. The default stays `100Gi` — smaller than 3.x's
+`archive` 100Gi plus `prearchive` 1Ti plus `cache` 1Ti — because Helm patches a
+changed request onto the live claim on upgrade, which is rejected outright on a
+class without `allowVolumeExpansion` and on this chart's own static NFS and
+hostVolume PVs, and silently grows the volume where expansion is allowed. Set
+it explicitly on a new install.
 
-`templates/upgrade-guard.yaml` blocks that, and prints these two options:
+**Upgrading an existing release will try to delete your archive.** On 3.x the
+defaults rendered the three as claims of their own. They are no longer
+rendered, and Helm deletes what leaves a release. On a StorageClass with the
+default `reclaimPolicy: Delete`, the PersistentVolume and its contents go with
+the claim.
+
+Find the claims first — the name is `<fullname>-archive`, and `fullname`
+collapses to the release name when that already contains `xnat`, so a release
+called `my-xnat` has `my-xnat-archive`, not `my-xnat-xnat-archive`:
+
+```console
+kubectl -n <ns> get pvc -l app.kubernetes.io/instance=<release>
+```
+
+`templates/upgrade-guard.yaml` blocks the upgrade while any of them would be
+removed, and offers three ways forward:
 
 | | what to do |
 | --- | --- |
-| keep the split layout | set `volumes.<name>.size` back to the request the live claim already has, and leave its `accessMode` and `storageClass` in place |
-| adopt the single mount | `kubectl -n <ns> annotate pvc <release>-xnat-{archive,prearchive,cache} helm.sh/resource-policy=keep`, upgrade, copy the data into the `xnatdata` volume, then delete the orphaned claims once you have verified the move |
+| keep the split layout | set `volumes.<name>.size` back to the request the live claim already has, leaving its `accessMode` and `storageClass` in place |
+| adopt a claim where it is | point `volumes.<name>.existingClaim` at it **and** annotate it `helm.sh/resource-policy=keep` — an `existingClaim` is not rendered either, so the annotation is what stops Helm removing it |
+| move to the single mount | copy the data **before** upgrading, as below |
 
-The guard clears as soon as the annotation is present, so the second option is
-followable rather than a wall.
+Copy before you upgrade. Afterwards `/data/xnat/archive` is an empty directory
+while the database still references every archived session, so XNAT comes up
+serving a broken archive and can write new sessions into the empty tree. The
+orphaned claims are also unmounted by then, so the copy needs a helper pod that
+mounts both.
+
+```console
+kubectl -n <ns> annotate pvc <claims> helm.sh/resource-policy=keep
+kubectl -n <ns> scale statefulset <fullname> --replicas=0
+# copy each claim into the matching directory of the xnatdata volume
+# upgrade, verify, then delete the orphaned claims
+```
+
+If those are NFS or hostVolume claims, also set `nfs: false` / `hostVolume:
+false` on each — the chart renders the PersistentVolume itself and now fails
+for want of a `size` if you only clear that. For NFS the data location moves
+from `<pathPrefix>/<name>` to `<pathPrefix>/xnatdata/<name>`, so the
+server-side copy is not optional.
 
 **Argo CD, `helm template | kubectl apply --prune` and `kustomize
---enable-helm` are not protected, and must take the second option by hand.**
-The guard reads the live claims with `lookup`, which Helm populates only for a
-real `install`/`upgrade` — under `helm template` it returns nothing, so the
-render succeeds silently. `helm.sh/resource-policy` does not help either: it is
-a Helm concept that Argo does not honour, and the chart can only apply it to
-claims it still renders, never to the legacy three. Since those pipelines are
-the ones that prune, annotate the claims before bumping the chart, and set
-`argocd.argoproj.io/sync-options: Prune=false` on them or add them to the
-Application's `ignoreDifferences`. Helm and Flux's helm-controller both run
-`lookup` and are covered.
+--enable-helm` get no guard at all.** It reads the live claims with `lookup`,
+which Helm populates only for a real `install`/`upgrade` — under `helm
+template` it returns nothing and the render succeeds silently.
+`helm.sh/resource-policy` does not help either: it is a Helm concept Argo does
+not honour, and the chart can only apply it to claims it still renders, never
+to the legacy three. Since those pipelines are the ones that prune, do the
+copy above by hand and set `argocd.argoproj.io/sync-options: Prune=false` on
+the claims. `ignoreDifferences` will **not** save them — it suppresses
+field-level diffs on resources that are still in the desired state, and a
+resource with no target manifest is a prune candidate regardless. Helm and
+Flux's helm-controller both run `lookup` and are covered.
 
 The guard also makes `get persistentvolumeclaims` in the release namespace a
 rendering prerequisite. Without that RBAC every upgrade of this chart fails
 there, including upgrades that touch no volume.
 
-Three smaller changes in the same release:
+Two smaller changes in the same release:
 
-- `xnatdata` now holds all three directories, so size it for their sum. The
-  default stays `100Gi` on purpose: Helm patches a changed request onto the
-  live claim, which is rejected outright on a class without
-  `allowVolumeExpansion` and on this chart's own static NFS and hostVolume PVs,
-  and silently grows the volume where expansion is allowed.
 - An `existingClaim` is now mounted whether or not a `size` is set. Previously
   both StatefulSet ranges gated on `size` alone, so a claim supplied without
   one was silently left unmounted.

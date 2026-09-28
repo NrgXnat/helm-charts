@@ -1,12 +1,16 @@
 {{/*
 Refuse an upgrade that would delete a split archive, prearchive or cache claim.
 
-Before 4.0.0 the chart rendered <release>-xnat-{archive,prearchive,cache} as
-claims of their own. 4.0.0 makes them directories on the xnatdata mount, so
-those claims drop out of the release -- and Helm deletes what drops out unless
-the live object is annotated helm.sh/resource-policy: keep. On a StorageClass
-with the default reclaimPolicy: Delete the PersistentVolume, and the data, go
-with the claim.
+Before 4.0.0 the chart rendered <fullname>-{archive,prearchive,cache} as claims
+of their own. 4.0.0 makes them directories on the xnatdata mount, so those
+claims leave the release -- and Helm deletes what leaves a release unless the
+live object is annotated helm.sh/resource-policy: keep. On a StorageClass with
+the default reclaimPolicy: Delete the PersistentVolume, and the data, go too.
+
+The condition mirrors pvc.yaml, which renders a claim only when a size is set
+AND no existingClaim is: setting existingClaim suppresses the rendered claim
+just as an absent size does, so adopting the legacy claim that way would
+otherwise delete the very claim the StatefulSet has just been pointed at.
 
 lookup returns nothing under `helm template` and client-side `--dry-run`, so
 this is inert in CI renders. It does read the cluster on a real install as
@@ -18,43 +22,64 @@ which both run lookup; it does NOT cover a render-and-apply pipeline -- Argo
 CD, `helm template | kubectl apply --prune`, kustomize --enable-helm -- where
 lookup is empty and the keep annotation in pvc.yaml only ever lands on claims
 this chart still renders, never on the legacy ones. Those consumers get the
-prune this guard exists to prevent, unwarned. And it makes `get
-persistentvolumeclaims` in the release namespace a rendering prerequisite:
-without that RBAC, Helm surfaces the Forbidden error and every upgrade of
-this chart fails here, including upgrades that touch no volume at all.
+prune this guard exists to prevent, unwarned; README.md tells them what to do
+by hand. And it makes `get persistentvolumeclaims` in the release namespace a
+rendering prerequisite: without that RBAC, Helm surfaces the Forbidden error
+and every upgrade of this chart fails here, including upgrades that touch no
+volume at all.
 
 Renders no object.
 */}}
+{{- $doomed := list }}
 {{- range $n := list "archive" "prearchive" "cache" }}
-{{- if not (dig $n "size" "" $.Values.volumes) }}
+{{- if or (dig $n "existingClaim" "" $.Values.volumes) (not (dig $n "size" "" $.Values.volumes)) }}
 {{- $claim := printf "%s-%s" (include "xnat.fullname" $) $n }}
 {{- $live := lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $claim }}
 {{- if $live }}
 {{- if ne (dig "metadata" "annotations" "helm.sh/resource-policy" "" $live) "keep" }}
+{{- $doomed = append $doomed $claim }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if $doomed }}
 {{- fail (printf `
-This release still has a separate %q claim, and upgrading would DELETE it.
+Upgrading would DELETE these claims, which still exist in %s:
+
+    %s
 
 Chart 4.0.0 makes archive, prearchive and cache directories on the xnatdata
-mount, so %q is no longer part of the release. Helm removes what leaves a
+mount, so they are no longer part of the release. Helm removes what leaves a
 release, and on a StorageClass with reclaimPolicy: Delete that destroys the
 PersistentVolume and everything in it.
 
-Pick one, then upgrade again:
+Pick one, then upgrade again.
 
- 1. Keep the split layout -- set volumes.%s.size back to this release's
-    current request (and leave its accessMode and storageClass in place).
-    Moving a session from the prearchive to the archive stays a copy rather
-    than a rename, which is why it is no longer the default.
+ 1. KEEP THE SPLIT LAYOUT. Set volumes.<name>.size back to the request the live
+    claim already has, leaving its accessMode and storageClass in place. Moving
+    a session from the prearchive to the archive stays a copy rather than a
+    rename, which is why this is no longer the default.
 
- 2. Adopt the single mount -- detach the claims so Helm cannot remove them:
+ 2. ADOPT A CLAIM WHERE IT IS. Point volumes.<name>.existingClaim at it AND
+    annotate it -- an existingClaim is not rendered either, so the annotation
+    is what stops Helm removing it:
+
+      kubectl -n %s annotate pvc <name> helm.sh/resource-policy=keep
+
+ 3. MOVE TO THE SINGLE MOUNT. Copy the data BEFORE upgrading: afterwards
+    /data/xnat/archive is an empty directory while the database still
+    references every archived session, and XNAT will serve a broken archive
+    and write new sessions into the empty tree.
 
       kubectl -n %s annotate pvc %s helm.sh/resource-policy=keep
+      kubectl -n %s scale statefulset %s --replicas=0
+      # copy each claim into the matching directory of the xnatdata volume,
+      # using a helper pod that mounts both -- the orphaned claims are not
+      # mounted by any pod once the upgrade has run
+      # then upgrade, and delete the orphaned claims once you have verified it
 
-    then upgrade, copy the data into the xnatdata volume, and delete the
-    orphaned claims yourself once you have verified the move.
-
-` $claim $claim $n $.Release.Namespace $claim) }}
-{{- end }}
-{{- end }}
-{{- end }}
+    If these are NFS or hostVolume claims you must also set nfs: false /
+    hostVolume: false on each, or the render fails for want of a size; for NFS
+    the data also moves from <pathPrefix>/<name> to <pathPrefix>/xnatdata/<name>.
+` $.Release.Namespace (join "\n    " $doomed) $.Release.Namespace $.Release.Namespace (join " " $doomed) $.Release.Namespace (include "xnat.fullname" $)) }}
 {{- end }}
