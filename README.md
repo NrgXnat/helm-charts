@@ -25,6 +25,59 @@ merge to `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#versioning-automated).
 
 ## Upgrade notes
 
+### 4.0 — one mount for archive, prearchive and cache
+
+`rename(2)` returns `EXDEV` across mount points even when both sit on one
+filesystem, so a split layout turns every prearchive-to-archive move into a
+full copy. From 4.0 `archive`, `prearchive` and `cache` default to `size: null`
+and are plain directories on the `xnatdata` mount, which lets XNAT rename.
+
+**Upgrading an existing release will try to delete your archive.** On 3.x the
+defaults render `<release>-xnat-archive`, `-prearchive` and `-cache` as claims
+of their own. They are no longer rendered, and Helm deletes what leaves a
+release. On a StorageClass with the default `reclaimPolicy: Delete`, the
+PersistentVolume and its contents go with the claim.
+
+`templates/upgrade-guard.yaml` blocks that, and prints these two options:
+
+| | what to do |
+| --- | --- |
+| keep the split layout | set `volumes.<name>.size` back to the request the live claim already has, and leave its `accessMode` and `storageClass` in place |
+| adopt the single mount | `kubectl -n <ns> annotate pvc <release>-xnat-{archive,prearchive,cache} helm.sh/resource-policy=keep`, upgrade, copy the data into the `xnatdata` volume, then delete the orphaned claims once you have verified the move |
+
+The guard clears as soon as the annotation is present, so the second option is
+followable rather than a wall.
+
+**Argo CD, `helm template | kubectl apply --prune` and `kustomize
+--enable-helm` are not protected, and must take the second option by hand.**
+The guard reads the live claims with `lookup`, which Helm populates only for a
+real `install`/`upgrade` — under `helm template` it returns nothing, so the
+render succeeds silently. `helm.sh/resource-policy` does not help either: it is
+a Helm concept that Argo does not honour, and the chart can only apply it to
+claims it still renders, never to the legacy three. Since those pipelines are
+the ones that prune, annotate the claims before bumping the chart, and set
+`argocd.argoproj.io/sync-options: Prune=false` on them or add them to the
+Application's `ignoreDifferences`. Helm and Flux's helm-controller both run
+`lookup` and are covered.
+
+The guard also makes `get persistentvolumeclaims` in the release namespace a
+rendering prerequisite. Without that RBAC every upgrade of this chart fails
+there, including upgrades that touch no volume.
+
+Three smaller changes in the same release:
+
+- `xnatdata` now holds all three directories, so size it for their sum. The
+  default stays `100Gi` on purpose: Helm patches a changed request onto the
+  live claim, which is rejected outright on a class without
+  `allowVolumeExpansion` and on this chart's own static NFS and hostVolume PVs,
+  and silently grows the volume where expansion is allowed.
+- An `existingClaim` is now mounted whether or not a `size` is set. Previously
+  both StatefulSet ranges gated on `size` alone, so a claim supplied without
+  one was silently left unmounted.
+- Claims are annotated `helm.sh/resource-policy: keep` so data outlives removal
+  from values and `helm uninstall`. `build` opts out with `keep: false`, being
+  regenerable scratch; set `keep: false` on any volume you want reclaimed.
+
 ### TLS-terminating proxies — Tomcat now reports the public URL
 
 Tomcat only ever sees plain HTTP on 8080, so every absolute URL XNAT builds
