@@ -3,7 +3,7 @@
 {{- if .existingClaim }}
 {{- else }}
 {{- if and (or .nfs .hostVolume) (not $c.size) }}
-{{- fail (printf "volumes.%s: %s is true but size is unset. This chart renders the PersistentVolume itself, and capacity.storage has no default -- set volumes.%s.size." $name (ternary "nfs" "hostVolume" (not (not .nfs))) $name) }}
+{{- fail (printf "volumes.%s: %s is true but size is unset. This chart renders the PersistentVolume itself, and capacity.storage has no default. Set volumes.%s.size to keep this a volume of its own -- or, if you are merging it onto xnatdata for 4.0.0, set volumes.%s.%s: false as well, since clearing the size alone leaves the PV unrenderable." $name (ternary "nfs" "hostVolume" (not (not .nfs))) $name $name (ternary "nfs" "hostVolume" (not (not .nfs)))) }}
 {{- end }}
 {{- end }}
 {{- if .existingClaim }}
@@ -15,6 +15,13 @@ metadata:
   name: {{ include "xnat.fullname" $context }}-{{ $name }}
   labels:
     {{- include "xnat.labels" $context | nindent 4 }}
+  {{- if ne (toString $c.keep) "false" }}
+  annotations:
+    # The claim is not the only object this chart owns for an nfs/hostVolume
+    # volume. Keep the PV too, or removing the volume from values strands a
+    # kept claim against a deleted PV.
+    helm.sh/resource-policy: keep
+  {{- end }}
 spec:
   capacity:
     storage: {{ $c.size | quote }}

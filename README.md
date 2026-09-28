@@ -32,17 +32,21 @@ filesystem, so a split layout turns every prearchive-to-archive move into a
 full copy. From 4.0 `archive`, `prearchive` and `cache` default to `size: null`
 and are plain directories on the `xnatdata` mount, which lets XNAT rename.
 
-`xnatdata` now holds all three, so its default rises from `100Gi` to `1Ti` to
-cover what 3.x split across `archive`, `prearchive` and `cache`.
+`xnatdata` now holds all three, so its default rises from `100Gi` to `1Ti`.
+Treat that as a starting point rather than a calculation: 3.x defaulted to
+**2.1Ti** across the three it replaces (`archive` 100Gi, `prearchive` 1Ti,
+`cache` 1Ti), so a site that took those defaults needs more than `1Ti`. Size it
+against your data on a new install — nothing guards a fresh install.
 
 That default change would otherwise resize every release that never set the
 value explicitly: Helm patches a changed request onto the bound claim, which a
 StorageClass without `allowVolumeExpansion` rejects outright — as do this
 chart's own static NFS and hostVolume PVs — and which is irreversible where
-expansion is allowed, since Kubernetes cannot shrink a claim. The upgrade guard
-compares the rendered size against the live one for every claim the chart owns
-and stops the upgrade if they differ, naming both values. Pin the volume to
-what it already has:
+expansion is allowed, since Kubernetes cannot shrink a claim. On upgrade the
+guard compares the rendered size against the live one for every `volumes` entry
+the chart renders a claim for, and stops if they differ, naming both values.
+(It does not cover `persistence`, whose `volumeClaimTemplates` the API server
+rejects outright as immutable.) Pin the volume to what it already has:
 
 ```yaml
 volumes:
@@ -58,6 +62,11 @@ volumes:
     size: 2Ti
     allowResize: true
 ```
+
+**If you are merging the three onto `xnatdata`, this is the path you want, not
+the pin.** The volume has to grow to hold what was on three claims; pinning it
+to its current request leaves you copying an archive into a volume that cannot
+take it.
 
 **Upgrading an existing release will try to delete your archive.** On 3.x the
 defaults rendered the three as claims of their own. They are no longer
@@ -95,14 +104,22 @@ kubectl -n <ns> scale statefulset <fullname> --replicas=0
 # upgrade, verify, then delete the orphaned claims
 ```
 
+Copy **as uid 1000**, or `chown -R 1000:1000` afterwards. `fsGroup: 1000` with
+`fsGroupChangePolicy: OnRootMismatch` only relabels a volume whose root GID is
+wrong; `xnatdata`'s root already matches, so the kubelet will not touch what
+you put inside it, and XNAT runs as uid 1000. A root-owned archive tree comes
+up unwritable.
+
 If those are NFS or hostVolume claims, also set `nfs: false` / `hostVolume:
 false` on each — the chart renders the PersistentVolume itself and now fails
 for want of a `size` if you only clear that. For NFS the data location moves
 from `<pathPrefix>/<name>` to `<pathPrefix>/xnatdata/<name>`, so the
-server-side copy is not optional.
+server-side copy is not optional. Annotate those PVs as well as their claims —
+`kubectl annotate pv <name> helm.sh/resource-policy=keep` — or you keep a claim
+whose PersistentVolume Helm has deleted.
 
 **Argo CD, `helm template | kubectl apply --prune` and `kustomize
---enable-helm` get no guard at all.** It reads the live claims with `lookup`,
+--enable-helm` get no guard at all.** The guard reads the live claims with `lookup`,
 which Helm populates only for a real `install`/`upgrade` — under `helm
 template` it returns nothing and the render succeeds silently.
 `helm.sh/resource-policy` does not help either: it is a Helm concept Argo does
@@ -123,8 +140,11 @@ Two smaller changes in the same release:
 - An `existingClaim` is now mounted whether or not a `size` is set. Previously
   both StatefulSet ranges gated on `size` alone, so a claim supplied without
   one was silently left unmounted.
-- Claims are annotated `helm.sh/resource-policy: keep` so data outlives removal
-  from values and `helm uninstall`. `build` opts out with `keep: false`, being
+- Claims, and the PersistentVolumes the chart renders for `nfs`/`hostVolume`,
+  are annotated `helm.sh/resource-policy: keep` so data outlives removal from
+  values and `helm uninstall`. The flip side is that removing or renaming a
+  volume now strands its claim rather than deleting it, and you keep paying for
+  it until you remove it by hand. `build` opts out with `keep: false`, being
   regenerable scratch; set `keep: false` on any volume you want reclaimed.
 
 ### TLS-terminating proxies — Tomcat now reports the public URL

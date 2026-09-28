@@ -1,58 +1,49 @@
 {{/*
-Refuse an upgrade that would delete a split archive, prearchive or cache claim.
-
-Before 4.0.0 the chart rendered <fullname>-{archive,prearchive,cache} as claims
-of their own. 4.0.0 makes them directories on the xnatdata mount, so those
-claims leave the release -- and Helm deletes what leaves a release unless the
-live object is annotated helm.sh/resource-policy: keep. On a StorageClass with
-the default reclaimPolicy: Delete the PersistentVolume, and the data, go too.
-
-The condition mirrors pvc.yaml, which renders a claim only when a size is set
-AND no existingClaim is: setting existingClaim suppresses the rendered claim
-just as an absent size does, so adopting the legacy claim that way would
-otherwise delete the very claim the StatefulSet has just been pointed at.
+Two upgrade guards. Both are scoped to .Release.IsUpgrade: on a fresh install
+Helm deletes nothing and refuses to adopt an existing object, so neither
+hazard applies and a same-named leftover claim must not block the install.
 
 lookup returns nothing under `helm template` and client-side `--dry-run`, so
-this is inert in CI renders. It does read the cluster on a real install as
-well as an upgrade. It stops firing once the claim is annotated keep, so the
-instructions below are followable rather than a wall.
+both are inert in CI renders.
 
-Two limits worth stating plainly. It covers Helm and Flux's helm-controller,
-which both run lookup; it does NOT cover a render-and-apply pipeline -- Argo
+Two limits worth stating plainly. They cover Helm and Flux's helm-controller,
+which both run lookup; they do NOT cover a render-and-apply pipeline -- Argo
 CD, `helm template | kubectl apply --prune`, kustomize --enable-helm -- where
 lookup is empty and the keep annotation in pvc.yaml only ever lands on claims
 this chart still renders, never on the legacy ones. Those consumers get the
-prune this guard exists to prevent, unwarned; README.md tells them what to do
-by hand. And it makes `get persistentvolumeclaims` in the release namespace a
+prune these guards exist to prevent, unwarned; README.md tells them what to do
+by hand. And they make `get persistentvolumeclaims` in the release namespace a
 rendering prerequisite: without that RBAC, Helm surfaces the Forbidden error
 and every upgrade of this chart fails here, including upgrades that touch no
 volume at all.
 
 Renders no object.
 */}}
+{{- if .Release.IsUpgrade }}
+{{- $vols := default dict .Values.volumes }}
+
 {{/*
-Refuse an upgrade that would silently patch a live claim's request.
+GUARD 1 -- a size change silently patches a live claim.
 
 Changing a size in values rewrites resources.requests.storage on the bound
 claim. A StorageClass without allowVolumeExpansion rejects that outright, and
-where expansion is allowed it succeeds and is irreversible -- Kubernetes has
-no shrink. 4.0.0 raises the xnatdata default from 100Gi to 1Ti, so every
-release that never set it explicitly would be resized tenfold by the upgrade
-alone; this is what makes raising the default safe.
+where expansion is allowed it succeeds and is irreversible: Kubernetes has no
+shrink. 4.0.0 raises the xnatdata default, so a release that never set it
+explicitly would be resized by the upgrade alone.
 
-Compares the rendered size against the live one as strings. Two spellings of
-the same quantity (1Ti vs 1024Gi) therefore read as a change -- the remedy is
-the same either way, and it fails safe rather than silently.
+Compares the rendered size against the live one as strings, so two spellings
+of one quantity (1Ti vs 1024Gi) read as a change. The remedy is the same
+either way and it fails safe rather than silently.
 */}}
 {{- $resized := list }}
-{{- range $name, $c := .Values.volumes }}
-{{- if and $c.size (not $c.existingClaim) (ne $c.allowResize true) }}
+{{- range $name, $c := $vols }}
+{{- if and $c $c.size (not $c.existingClaim) (ne (toString $c.allowResize) "true") }}
 {{- $claim := printf "%s-%s" (include "xnat.fullname" $) $name }}
 {{- $live := lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $claim }}
 {{- if $live }}
 {{- $was := dig "spec" "resources" "requests" "storage" "" $live }}
-{{- if and $was (ne ($was | toString) ($c.size | toString)) }}
-{{- $resized = append $resized (printf "%s: %s -> %s  (volumes.%s.size)" $claim ($was | toString) ($c.size | toString) $name) }}
+{{- if and $was (ne (toString $was) (toString $c.size)) }}
+{{- $resized = append $resized (printf "%s: %s -> %s  (volumes.%s.size)" $claim (toString $was) (toString $c.size) $name) }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -67,22 +58,39 @@ Kubernetes cannot shrink a claim, and a StorageClass without
 allowVolumeExpansion rejects any change at all -- so this either fails the
 upgrade or grows the volume irreversibly.
 
-If you did not mean to resize anything, you are probably hitting the 4.0.0
-default: xnatdata went from 100Gi to 1Ti, because it now holds archive,
-prearchive and cache rather than only what 3.x put on it. Pin the volume to
-what it already has:
+If you are MERGING archive, prearchive and cache onto xnatdata, it has to grow
+to hold all three, not stay where it is. Set the size you need and say you
+mean it:
+
+    volumes.xnatdata.size: <big enough for all three>
+    volumes.xnatdata.allowResize: true
+
+Otherwise you are probably just inheriting the 4.0.0 default, which raised
+xnatdata because it now carries those directories. Pin the volume to what it
+already has:
 
     volumes.<name>.size: <the value on the left above>
-
-If you do mean it, say so on the volume and check the class allows expansion:
-
-    volumes.<name>.allowResize: true
 ` (join "\n    " $resized)) }}
 {{- end }}
 
+{{/*
+GUARD 2 -- the claims 4.0.0 stops rendering.
+
+Before 4.0.0 the chart rendered <fullname>-{archive,prearchive,cache} as
+claims of their own. 4.0.0 makes them directories on the xnatdata mount, so
+those claims leave the release -- and Helm deletes what leaves a release
+unless the live object is annotated helm.sh/resource-policy: keep. On a
+StorageClass with the default reclaimPolicy: Delete the PersistentVolume, and
+the data, go too.
+
+The condition mirrors pvc.yaml, which renders a claim only when a size is set
+AND no existingClaim is: setting existingClaim suppresses the rendered claim
+just as an absent size does, so adopting the legacy claim that way would
+otherwise delete the very claim the StatefulSet has just been pointed at.
+*/}}
 {{- $doomed := list }}
 {{- range $n := list "archive" "prearchive" "cache" }}
-{{- if or (dig $n "existingClaim" "" $.Values.volumes) (not (dig $n "size" "" $.Values.volumes)) }}
+{{- if or (dig $n "existingClaim" "" $vols) (not (dig $n "size" "" $vols)) }}
 {{- $claim := printf "%s-%s" (include "xnat.fullname" $) $n }}
 {{- $live := lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $claim }}
 {{- if $live }}
@@ -116,20 +124,33 @@ Pick one, then upgrade again.
 
       kubectl -n %s annotate pvc <name> helm.sh/resource-policy=keep
 
- 3. MOVE TO THE SINGLE MOUNT. Copy the data BEFORE upgrading: afterwards
-    /data/xnat/archive is an empty directory while the database still
-    references every archived session, and XNAT will serve a broken archive
-    and write new sessions into the empty tree.
+ 3. MOVE TO THE SINGLE MOUNT. Grow xnatdata first -- it has to hold all three,
+    and 4.0.0's default is a starting point, not their sum:
+
+      volumes.xnatdata.size: <big enough for all three>
+      volumes.xnatdata.allowResize: true
+
+    Copy the data BEFORE upgrading. Afterwards /data/xnat/archive is an empty
+    directory while the database still references every archived session, so
+    XNAT serves a broken archive and can write new sessions into the empty
+    tree. The orphaned claims are also unmounted by then.
 
       kubectl -n %s annotate pvc %s helm.sh/resource-policy=keep
       kubectl -n %s scale statefulset %s --replicas=0
-      # copy each claim into the matching directory of the xnatdata volume,
-      # using a helper pod that mounts both -- the orphaned claims are not
-      # mounted by any pod once the upgrade has run
+      # copy each claim into the matching directory of the xnatdata volume
+      # with a helper pod that mounts both. Copy AS uid 1000, or chown -R
+      # 1000:1000 afterwards: fsGroupChangePolicy is OnRootMismatch and the
+      # xnatdata root already matches, so the kubelet will NOT relabel what
+      # you put inside it, and XNAT runs as uid 1000.
       # then upgrade, and delete the orphaned claims once you have verified it
 
     If these are NFS or hostVolume claims you must also set nfs: false /
     hostVolume: false on each, or the render fails for want of a size; for NFS
     the data also moves from <pathPrefix>/<name> to <pathPrefix>/xnatdata/<name>.
+    This chart renders their PersistentVolumes too, and only the claims carry
+    the keep annotation -- annotate the PVs as well:
+
+      kubectl annotate pv <pv-name> helm.sh/resource-policy=keep
 ` $.Release.Namespace (join "\n    " $doomed) $.Release.Namespace $.Release.Namespace (join " " $doomed) $.Release.Namespace (include "xnat.fullname" $)) }}
+{{- end }}
 {{- end }}

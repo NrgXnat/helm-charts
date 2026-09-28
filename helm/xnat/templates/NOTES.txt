@@ -33,7 +33,7 @@
 
 {{- $split := list }}
 {{- range $n := list "archive" "prearchive" "cache" }}
-{{- if or (dig $n "size" "" $.Values.volumes) (dig $n "existingClaim" "" $.Values.volumes) }}{{ $split = append $split $n }}{{ end }}
+{{- if or (dig $n "size" "" (default dict $.Values.volumes)) (dig $n "existingClaim" "" (default dict $.Values.volumes)) }}{{ $split = append $split $n }}{{ end }}
 {{- end }}
 {{- if $split }}
 
@@ -46,6 +46,6 @@ WARNING: {{ join ", " $split }} {{ if eq (len $split) 1 }}has a volume of its ow
 {{- end }}
 
   Clear BOTH size and existingClaim on {{ join ", " $split }} to make
-  {{ if eq (len $split) 1 }}it a directory{{ else }}them directories{{ end }} on the {{ .Values.volumes.xnatdata.mountPath }} mount.
+  {{ if eq (len $split) 1 }}it a directory{{ else }}them directories{{ end }} on the {{ dig "xnatdata" "mountPath" "/data/xnat" (default dict .Values.volumes) }} mount.
   Either one alone still mounts a separate volume.
 {{- end }}
