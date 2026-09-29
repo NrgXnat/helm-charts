@@ -89,10 +89,13 @@ Pick one, then upgrade again.
       kubectl -n %s scale statefulset %s --replicas=0
 
       # copy each claim into the matching directory of the xnatdata volume
-      # with a helper pod that mounts both. Copy AS uid 1000, or chown -R
-      # 1000:1000 afterwards: fsGroupChangePolicy is OnRootMismatch and the
-      # xnatdata root already matches, so the kubelet will NOT relabel what
-      # you put inside it, and XNAT runs as uid 1000.
+      # with a helper pod that mounts both, running AS ROOT: those directories
+      # already exist in xnatdata, root-owned, as the mount points 3.x used,
+      # so a non-root copy is refused. Then chown -R 1000:1000 them -- XNAT
+      # runs as uid 1000 and the kubelet will NOT fix ownership of what you
+      # copy in; home-init refuses to start if they are not writable. The
+      # xnatdata root itself must be writable by uid 1000 too; the chart
+      # README has an initContainer for that.
 
       # only once the copy is verified -- this is what silences this guard
       kubectl -n %s annotate pvc %s helm.sh/resource-policy=keep

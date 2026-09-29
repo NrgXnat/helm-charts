@@ -68,6 +68,46 @@ the pin.** The volume has to grow to hold what was on three claims; pinning it
 to its current request leaves you copying an archive into a volume that cannot
 take it.
 
+#### Volume roots must be writable by the XNAT uid
+
+`home-init` creates `archive`, `prearchive` and `cache` in the `xnatdata` root,
+and if it can't, it fails at start and says why. `fsGroup` can't be counted on
+to make that root writable: the kubelet never applies it to in-tree NFS or
+hostPath, nor to CSI drivers whose `fsGroupPolicy` is `None` or
+`ReadWriteOnceWithFSType` — which skips RWX volumes, and is what EFS and FSx
+for OpenZFS ship. On that storage every volume root arrives root-owned.
+
+That includes `build`, which defaults to `ReadWriteMany` on the same class and
+which nothing checks at start — XNAT comes up and fails on its first write
+there. So chown both roots, once, non-recursively, before `home-init` runs:
+
+```yaml
+initContainers:
+  - name: volume-owner
+    image: busybox:1.36
+    securityContext:
+      runAsUser: 0
+      runAsNonRoot: false
+    command: ["chown", "1000", "/data/xnat", "/data/xnat/build"]
+    volumeMounts:
+      - name: xnatdata
+        mountPath: /data/xnat
+      - name: build
+        mountPath: /data/xnat/build
+```
+
+If `home-init` has already failed, fixing your values and upgrading is not
+enough on its own: the StatefulSet will not replace a pod that never became
+Ready, so the stuck pod keeps the old template. Delete it
+(`kubectl -n <ns> delete pod <fullname>-0`) and it comes back on the new one.
+
+`initContainers` render ahead of `home-init`. Match the uid to
+`securityContext.runAsUser`, and drop the `build` lines if `build` is on
+storage `fsGroup` does reach, such as EBS, or if you have disabled it. This
+needs a namespace that admits a root container; under Pod Security
+`restricted`, or on an export that squashes root, set the ownership out of
+band instead.
+
 **Upgrading an existing release will try to delete your archive.** On 3.x the
 defaults rendered the three as claims of their own. They are no longer
 rendered, and Helm deletes what leaves a release. On a StorageClass with the
@@ -109,7 +149,7 @@ kubectl -n <ns> patch pvc <fullname>-xnatdata --type merge \
   -p '{"spec":{"resources":{"requests":{"storage":"<fits all three>"}}}}'
 
 kubectl -n <ns> scale statefulset <fullname> --replicas=0
-# copy each claim into the matching directory of the xnatdata volume
+# copy each claim into the matching directory of xnatdata as root, then chown -R 1000:1000
 kubectl -n <ns> annotate pvc <claims> helm.sh/resource-policy=keep  # once verified
 ```
 
@@ -123,11 +163,21 @@ than re-rendering, so neither guard runs: the 3.3.0 manifest requests the old
 the three claims as empty volumes mounted over your copied directories. Verify
 before you delete anything, and treat the orphaned claims as the rollback.
 
-Copy **as uid 1000**, or `chown -R 1000:1000` afterwards. `fsGroup: 1000` with
-`fsGroupChangePolicy: OnRootMismatch` only relabels a volume whose root GID is
-wrong; `xnatdata`'s root already matches, so the kubelet will not touch what
-you put inside it, and XNAT runs as uid 1000. A root-owned archive tree comes
-up unwritable.
+Run the copy **as root**, then `chown -R 1000:1000` what you copied. A
+non-root copy is refused: on a release that came from 3.x, `archive`,
+`prearchive` and `cache` already exist inside `xnatdata`, root-owned `0755`, as
+the mount points the old separate volumes were mounted on. The kubelet won't
+fix ownership of what you copy in either — `fsGroup` never reaches NFS,
+hostPath, EFS or FSx for OpenZFS, and where it does reach,
+`fsGroupChangePolicy: OnRootMismatch` skips a root that already matches.
+`home-init` checks that the three are writable and refuses to start if they
+aren't. The `xnatdata` root itself must be writable too — see
+[above](#volume-roots-must-be-writable-by-the-xnat-uid).
+
+If your values mount `archive`, `prearchive` or `cache` in containers of your
+own — as a working 3.x install on that storage has to, to chown them — drop
+those mounts. The volumes no longer exist, and the API server rejects the
+StatefulSet naming each one.
 
 If those are NFS or hostVolume claims, also set `nfs: false` / `hostVolume:
 false` on each — the chart renders the PersistentVolume itself and now fails
