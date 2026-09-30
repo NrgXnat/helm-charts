@@ -356,6 +356,18 @@ nfs:
   mountOptions: []
 
 volumes:
+  # archive, prearchive and cache are directories on this mount, not volumes of
+  # their own: rename(2) is EXDEV across mounts, so splitting them makes every
+  # prearchive->archive move a copy. This one volume holds all three, so size
+  # it against your data: 1Ti is a starting point, not a calculation. 3.x
+  # defaulted to 2.1Ti across the three it replaces (archive 100Gi, prearchive
+  # 1Ti, cache 1Ti), so a site that took those defaults needs more than this.
+  #
+  # Changing a size here patches the request onto the live claim on upgrade,
+  # which a StorageClass without allowVolumeExpansion rejects outright and
+  # which is irreversible where expansion is allowed. upgrade-guard.yaml stops
+  # that happening by accident; allowResize: true means you intend it, and
+  # works on any volume here, not only this one.
   xnatdata:
     nfs: false
     hostVolume: false
@@ -363,8 +375,13 @@ volumes:
     accessMode: ReadWriteMany
     mountPath: "/data/xnat"
     storageClass: "default"
-    size: 100Gi
+    size: 1Ti
+    allowResize: false
+  # Separate by design: regenerable scratch, and often better on local disk.
+  # keep: false lets `helm uninstall` reclaim it; every other volume defaults
+  # to keeping its claim, so data outlives a removal from values.
   build:
+    keep: false
     nfs: false
     hostVolume: false
     existingClaim:
@@ -372,6 +389,11 @@ volumes:
     mountPath: "/data/xnat/build"
     storageClass: "default"
     size: 100Gi
+  # size: null means no volume and no mount, so each is a plain directory on
+  # xnatdata. Giving one a size splits it back out into its own claim, at the
+  # cost above; accessMode and storageClass stay because the claim is
+  # rendered from them, and mountPath because the mount is.
+  # An existingClaim is mounted whether or not a size is set.
   cache:
     nfs: false
     hostVolume: false
@@ -379,7 +401,7 @@ volumes:
     accessMode: ReadWriteMany
     mountPath: "/data/xnat/cache"
     storageClass: "default"
-    size: 1Ti
+    size: null
   archive:
     nfs: false
     hostVolume: false
@@ -387,7 +409,7 @@ volumes:
     accessMode: ReadWriteMany
     mountPath: "/data/xnat/archive"
     storageClass: "default"
-    size: 100Gi
+    size: null
   prearchive:
     nfs: false
     hostVolume: false
@@ -395,7 +417,7 @@ volumes:
     accessMode: ReadWriteMany
     mountPath: "/data/xnat/prearchive"
     storageClass: "default"
-    size: 1Ti
+    size: null
 
 # Any extra volumes can be defined here and will be inserted into the chart as written
 extraVolumes: []

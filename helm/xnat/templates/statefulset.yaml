@@ -164,7 +164,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- range $name, $c := .Values.volumes }}
-            {{- if $c.size }}
+            {{- if or $c.size $c.existingClaim }}
             - mountPath: {{ $c.mountPath | quote }}
               name: {{ $name | quote }}
               {{- if $c.mountPropagation }}
@@ -393,6 +393,59 @@ spec:
             - |
               set -ex
               shopt -s extglob
+              {{- /* Only the ones that are directories on xnatdata: a volume with a
+                  size or an existingClaim is its own mount in the main container,
+                  and the directory under it is a mount point XNAT never writes.
+                  Same test as pvc.yaml and the volume ranges below. */}}
+              {{- $onData := list }}
+              {{- range $n := list "archive" "prearchive" "cache" }}
+              {{- if not (or (dig $n "size" "" (default dict $.Values.volumes)) (dig $n "existingClaim" "" (default dict $.Values.volumes))) }}
+              {{- $onData = append $onData $n }}
+              {{- end }}
+              {{- end }}
+              {{- if $onData }}
+              # {{ join ", " $onData }} are directories on the xnatdata mount rather
+              # than mounts of their own, so nothing else brings them into being --
+              # under 3.x the kubelet made each mount point.
+              #
+              # Creating them needs the xnatdata root writable by this uid, and
+              # fsGroup cannot be counted on for that: the kubelet never applies
+              # it to in-tree NFS or hostPath, nor to CSI drivers whose
+              # fsGroupPolicy is None or ReadWriteOnceWithFSType -- the latter
+              # skips RWX volumes, and is what EFS and FSx for OpenZFS ship. On
+              # that storage the root arrives root-owned. Failing here with the
+              # reason beats a bare mkdir error; under 3.x the same install came
+              # up and failed later, on the first write into the archive.
+              if [ -d /XNAT_DATA ]; then
+                if ! mkdir -p{{ range $onData }} /XNAT_DATA/{{ . }}{{ end }}; then
+                  { set +x; } 2>/dev/null  # say it once, not once traced and once printed
+                  echo "home-init: uid $(id -u) cannot create {{ join ", " $onData }} in the xnatdata root ($(stat -c '%u:%g %a' /XNAT_DATA))." >&2
+                  echo "fsGroup does not reach NFS, hostPath, or CSI drivers whose fsGroupPolicy skips this volume." >&2
+                  echo "Make the root writable by uid $(id -u), e.g. an initContainer running as root: chown $(id -u) {{ dig "xnatdata" "mountPath" "/data/xnat" (default dict .Values.volumes) }} (not -R). The chart README has one to copy." >&2
+                  exit 1
+                fi
+                # A root image runs home-init as root, so what it just created is
+                # root-owned; hand it to the uid XNAT runs as.
+                if [ "$(id -u)" = "0" ]; then
+                  chown {{ default "1000" .Values.securityContext.runAsUser }}{{ range $onData }} /XNAT_DATA/{{ . }}{{ end }}
+                fi
+                # mkdir -p is a no-op on a directory that already exists, and on a
+                # volume that came from 3.x these do: the runtime created them,
+                # root-owned 0755, as mount points for the old separate volumes.
+                # They survive the migration unwritable unless the copy fixed
+                # their ownership, and XNAT would only find out on its first write
+                # -- or, if the claims were annotated before the copy, would serve
+                # their empty contents as the archive.
+                for d in {{ join " " $onData }}; do
+                  if [ ! -w "/XNAT_DATA/$d" ]; then
+                    { set +x; } 2>/dev/null
+                    echo "home-init: uid $(id -u) cannot write $d in the xnatdata root ($(stat -c '%u:%g %a' "/XNAT_DATA/$d"))." >&2
+                    echo "On a release upgraded from 3.x this is the old mount point, left root-owned. If the data has been copied in, chown -R $(id -u) it from a root container; if not, copy it first (see the chart README)." >&2
+                    exit 1
+                  fi
+                done
+              fi
+              {{- end }}
               # Copy Tomcat folder
               if [ -d /TOMCAT ]; then
                 cp -r --preserve=mode,timestamps /usr/local/tomcat/* /TOMCAT
@@ -549,6 +602,10 @@ spec:
             {{- end }}
             - name: xnat-home
               mountPath: /XNAT_HOME
+            {{- if or (dig "xnatdata" "size" "" (default dict .Values.volumes)) (dig "xnatdata" "existingClaim" "" (default dict .Values.volumes)) }}
+            - name: xnatdata
+              mountPath: /XNAT_DATA
+            {{- end }}
             - name: home-plugins
               mountPath: /HOME-PLUGINS
             - name: xnat-config
@@ -613,7 +670,7 @@ spec:
             secretName: {{ include "xnat.fullname" . }}
         {{- $context := . -}}
         {{- range $name, $c := .Values.volumes }}
-        {{- if $c.size }}
+        {{- if or $c.size $c.existingClaim }}
         - name: {{ $name }}
           persistentVolumeClaim:
             claimName: {{ $c.existingClaim | default (printf "%s-%s" (include "xnat.fullname" $context) $name) }}

@@ -25,6 +25,211 @@ merge to `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#versioning-automated).
 
 ## Upgrade notes
 
+### 4.0 — one mount for archive, prearchive and cache
+
+`rename(2)` returns `EXDEV` across mount points even when both sit on one
+filesystem, so a split layout turns every prearchive-to-archive move into a
+full copy. From 4.0 `archive`, `prearchive` and `cache` default to `size: null`
+and are plain directories on the `xnatdata` mount, which lets XNAT rename.
+
+`xnatdata` now holds all three, so its default rises from `100Gi` to `1Ti`.
+Treat that as a starting point rather than a calculation: 3.x defaulted to
+**2.1Ti** across the three it replaces (`archive` 100Gi, `prearchive` 1Ti,
+`cache` 1Ti), so a site that took those defaults needs more than `1Ti`. Size it
+against your data on a new install — nothing guards a fresh install.
+
+That default change would otherwise resize every release that never set the
+value explicitly: Helm patches a changed request onto the bound claim, which a
+StorageClass without `allowVolumeExpansion` rejects outright — as do this
+chart's own static NFS and hostVolume PVs — and which is irreversible where
+expansion is allowed, since Kubernetes cannot shrink a claim. The guard
+compares the rendered size against the live one for every `volumes` entry
+the chart renders a claim for, and stops if they differ, naming both values.
+(It does not cover `persistence`, whose `volumeClaimTemplates` the API server
+rejects outright as immutable.) Pin the volume to what it already has:
+
+```yaml
+volumes:
+  xnatdata:
+    size: 100Gi   # whatever the live claim requests
+```
+
+To resize deliberately, say so on the volume and check the class allows it:
+
+```yaml
+volumes:
+  xnatdata:
+    size: 2Ti
+    allowResize: true
+```
+
+**If you are merging the three onto `xnatdata`, this is the path you want, not
+the pin.** The volume has to grow to hold what was on three claims; pinning it
+to its current request leaves you copying an archive into a volume that cannot
+take it.
+
+#### Volume roots must be writable by the XNAT uid
+
+`home-init` creates `archive`, `prearchive` and `cache` in the `xnatdata` root,
+and if it can't, it fails at start and says why. `fsGroup` can't be counted on
+to make that root writable: the kubelet never applies it to in-tree NFS or
+hostPath, nor to CSI drivers whose `fsGroupPolicy` is `None` or
+`ReadWriteOnceWithFSType` — which skips RWX volumes, and is what EFS and FSx
+for OpenZFS ship. On that storage every volume root arrives root-owned.
+
+That includes `build`, which defaults to `ReadWriteMany` on the same class and
+which nothing checks at start — XNAT comes up and fails on its first write
+there. So chown both roots, once, non-recursively, before `home-init` runs:
+
+```yaml
+initContainers:
+  - name: volume-owner
+    image: busybox:1.36
+    securityContext:
+      runAsUser: 0
+      runAsNonRoot: false
+    command: ["chown", "1000", "/data/xnat", "/data/xnat/build"]
+    volumeMounts:
+      - name: xnatdata
+        mountPath: /data/xnat
+      - name: build
+        mountPath: /data/xnat/build
+```
+
+If `home-init` has already failed, fixing your values and upgrading is not
+enough on its own: the StatefulSet will not replace a pod that never became
+Ready, so the stuck pod keeps the old template. Delete it
+(`kubectl -n <ns> delete pod <fullname>-0`) and it comes back on the new one.
+
+`initContainers` render ahead of `home-init`. Match the uid to
+`securityContext.runAsUser`, and drop the `build` lines if `build` is on
+storage `fsGroup` does reach, such as EBS, or if you have disabled it. This
+needs a namespace that admits a root container; under Pod Security
+`restricted`, or on an export that squashes root, set the ownership out of
+band instead.
+
+**Upgrading an existing release will try to delete your archive.** On 3.x the
+defaults rendered the three as claims of their own. They are no longer
+rendered, and Helm deletes what leaves a release. On a StorageClass with the
+default `reclaimPolicy: Delete`, the PersistentVolume and its contents go with
+the claim.
+
+Find the claims first — the name is `<fullname>-archive`, and `fullname`
+collapses to the release name when that already contains `xnat`, so a release
+called `my-xnat` has `my-xnat-archive`, not `my-xnat-xnat-archive`:
+
+```console
+kubectl -n <ns> get pvc -l app.kubernetes.io/instance=<release>
+```
+
+`templates/upgrade-guard.yaml` blocks the upgrade while any of them would be
+removed, and offers four ways forward:
+
+| | what to do |
+| --- | --- |
+| keep the split layout | set `volumes.<name>.size` back to the request the live claim already has, leaving its `accessMode` and `storageClass` in place |
+| adopt a claim where it is | point `volumes.<name>.existingClaim` at it **and** annotate it `helm.sh/resource-policy=keep` and `xnat.org/legacy-claim=handled` — an `existingClaim` is not rendered either, so `keep` is what stops Helm removing it, and the marker is what tells the guard you meant it. For an `nfs`/`hostVolume` claim the chart also stops rendering its PersistentVolume, which nothing checks — annotate that too |
+| move to the single mount | copy the data **before** upgrading, as below |
+| let one go | nothing you want is on it: `kubectl -n <ns> delete pvc <name>` yourself. There is no values-level opt-out |
+
+Copy before you upgrade. Afterwards `/data/xnat/archive` is an empty directory
+while the database still references every archived session, so XNAT comes up
+serving a broken archive and can write new sessions into the empty tree. The
+orphaned claims are also unmounted by then, so the copy needs a helper pod that
+mounts both.
+
+Do all of it outside Helm first, then upgrade once. The deletion guard blocks
+every upgrade until each claim carries `xnat.org/legacy-claim=handled`, and
+that marker is what makes upgrading safe — so you cannot grow `xnatdata`
+through Helm before the copy, and you must not set the marker before it
+either. `helm.sh/resource-policy: keep` alone does not clear the guard: the
+chart sets that itself, on any of the three it still renders and, from 3.4.1,
+on all three, so it says nothing about whether the data was copied. The marker
+is never rendered by the chart.
+
+```console
+# grow xnatdata in place; needs a class with allowVolumeExpansion
+kubectl -n <ns> patch pvc <fullname>-xnatdata --type merge \
+  -p '{"spec":{"resources":{"requests":{"storage":"<fits all three>"}}}}'
+
+kubectl -n <ns> scale statefulset <fullname> --replicas=0
+# copy each claim into the matching directory of xnatdata as root, then chown -R 1000:1000
+kubectl -n <ns> annotate --overwrite pvc <claims> helm.sh/resource-policy=keep xnat.org/legacy-claim=handled  # once verified
+```
+
+Then set `volumes.xnatdata.size` to the size you patched in and upgrade. It
+matches the live claim by then, so the resize guard stays quiet and you do not
+need `allowResize`. Delete the orphaned claims when you are satisfied.
+
+There is no clean rollback. `helm rollback` replays a stored manifest rather
+than re-rendering, so neither guard runs: the 3.3.0 manifest requests the old
+`xnatdata` size, which the API server rejects as a shrink, and it re-creates
+the three claims as empty volumes mounted over your copied directories. Verify
+before you delete anything, and treat the orphaned claims as the rollback.
+
+Run the copy **as root**, then `chown -R 1000:1000` what you copied. A
+non-root copy is refused: on a release that came from 3.x, `archive`,
+`prearchive` and `cache` already exist inside `xnatdata`, root-owned `0755`, as
+the mount points the old separate volumes were mounted on. The kubelet won't
+fix ownership of what you copy in either — `fsGroup` never reaches NFS,
+hostPath, EFS or FSx for OpenZFS, and where it does reach,
+`fsGroupChangePolicy: OnRootMismatch` skips a root that already matches.
+`home-init` checks that the three are writable and refuses to start if they
+aren't. The `xnatdata` root itself must be writable too — see
+[above](#volume-roots-must-be-writable-by-the-xnat-uid).
+
+If your values mount `archive`, `prearchive` or `cache` in containers of your
+own — as a working 3.x install on that storage has to, to chown them — drop
+those mounts. The volumes no longer exist, and the API server rejects the
+StatefulSet naming each one.
+
+If those are NFS or hostVolume claims, also set `nfs: false` / `hostVolume:
+false` on each — the chart renders the PersistentVolume itself and now fails
+for want of a `size` if you only clear that. For NFS the data location moves
+from `<pathPrefix>/<name>` to `<pathPrefix>/xnatdata/<name>`, so the
+server-side copy is not optional. Annotate those PVs as well as their claims —
+`kubectl annotate pv <name> helm.sh/resource-policy=keep` — or you keep a claim
+whose PersistentVolume Helm has deleted.
+
+**Argo CD, `helm template | kubectl apply --prune` and `kustomize
+--enable-helm` get no guard at all.** The guard reads the live claims with `lookup`,
+which Helm populates only for a real `install`/`upgrade` — under `helm
+template` it returns nothing and the render succeeds silently.
+`helm.sh/resource-policy: keep` does not help either: Argo reads it as
+`Delete=false`, which keeps a resource when the Application is deleted but not
+when it is pruned, and a render-and-apply pipeline ignores it. Since those
+pipelines are the ones that prune, do the copy above by hand, and make sure
+the three claims carry `argocd.argoproj.io/sync-options: Prune=false` before
+this upgrade. Chart 3.4.1 stamps that on them, so on Argo upgrade through
+3.4.1 first; otherwise annotate them yourself. After that, a missed copy
+stops at `home-init` on the root-owned old mount points rather than pruning
+the archive. From 4.0 every claim and PV the chart renders carries both
+annotations, with the same `keep: false` opt-out. `ignoreDifferences` will **not** save them — it suppresses
+field-level diffs on resources that are still in the desired state, and a
+resource with no target manifest is a prune candidate regardless. Helm and
+Flux's helm-controller both run `lookup` and are covered.
+
+The guards also make `get persistentvolumeclaims` in the release namespace a
+rendering prerequisite. Without that RBAC every render of this chart fails
+there — installs included, since the resize guard is not upgrade-scoped — and
+that covers renders which touch no volume at all.
+
+Two smaller changes in the same release:
+
+- An `existingClaim` is now mounted whether or not a `size` is set. Previously
+  both StatefulSet ranges gated on `size` alone, so a claim supplied without
+  one was silently left unmounted.
+- Claims, and the PersistentVolumes the chart renders for `nfs`/`hostVolume`,
+  are annotated `helm.sh/resource-policy: keep` so data outlives removal from
+  values and `helm uninstall`. The flip side is that removing or renaming a
+  volume now strands its claim rather than deleting it, and you keep paying for
+  it until you remove it by hand. `build` opts out with `keep: false`, being
+  regenerable scratch; set `keep: false` on any volume you want reclaimed. One
+  consequence: `helm uninstall` now leaves claims behind carrying their Helm
+  ownership metadata, so a later `helm install` under the same release name
+  adopts them — which is why the resize guard runs on install too, not only on
+  upgrade.
+
 ### Tomcat keep-alive now outlives the proxy's idle timeout
 
 Stock Tomcat closes an idle keep-alive connection after `connectionTimeout`
