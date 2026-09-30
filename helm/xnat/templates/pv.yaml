@@ -19,8 +19,9 @@ metadata:
   annotations:
     # The claim is not the only object this chart owns for an nfs/hostVolume
     # volume. Keep the PV too, or removing the volume from values strands a
-    # kept claim against a deleted PV.
+    # kept claim against a deleted PV. Prune=false does the same under Argo CD.
     helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Prune=false
   {{- end }}
 spec:
   capacity:
@@ -46,8 +47,9 @@ metadata:
   annotations:
     # The claim is not the only object this chart owns for an nfs/hostVolume
     # volume. Keep the PV too, or removing the volume from values strands a
-    # kept claim against a deleted PV.
+    # kept claim against a deleted PV. Prune=false does the same under Argo CD.
     helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Prune=false
   {{- end }}
 spec:
   capacity:

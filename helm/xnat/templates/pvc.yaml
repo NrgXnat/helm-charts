@@ -13,8 +13,11 @@ metadata:
   annotations:
     # Outlive removal from the release: dropping a volume from values, or
     # uninstalling, must not take the data with it. Opt out with keep: false
-    # on a volume whose contents are regenerable.
+    # on a volume whose contents are regenerable. Helm honours the first;
+    # Argo CD reads it only as Delete=false, which survives Application
+    # deletion but not a prune, so Prune=false covers that.
     helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Prune=false
   {{- end }}
 spec:
   accessModes: [ {{ $c.accessMode | quote }} ]

@@ -191,11 +191,16 @@ whose PersistentVolume Helm has deleted.
 --enable-helm` get no guard at all.** The guard reads the live claims with `lookup`,
 which Helm populates only for a real `install`/`upgrade` — under `helm
 template` it returns nothing and the render succeeds silently.
-`helm.sh/resource-policy` does not help either: it is a Helm concept Argo does
-not honour, and the chart can only apply it to claims it still renders, never
-to the legacy three. Since those pipelines are the ones that prune, do the
-copy above by hand and set `argocd.argoproj.io/sync-options: Prune=false` on
-the claims. `ignoreDifferences` will **not** save them — it suppresses
+`helm.sh/resource-policy: keep` does not help either: Argo reads it as
+`Delete=false`, which keeps a resource when the Application is deleted but not
+when it is pruned, and a render-and-apply pipeline ignores it. Since those
+pipelines are the ones that prune, do the copy above by hand, and make sure
+the three claims carry `argocd.argoproj.io/sync-options: Prune=false` before
+this upgrade. Chart 3.3.1 stamps that on them, so on Argo upgrade through
+3.3.1 first; otherwise annotate them yourself. After that, a missed copy
+stops at `home-init` on the root-owned old mount points rather than pruning
+the archive. From 4.0 every claim and PV the chart renders carries both
+annotations, with the same `keep: false` opt-out. `ignoreDifferences` will **not** save them — it suppresses
 field-level diffs on resources that are still in the desired state, and a
 resource with no target manifest is a prune candidate regardless. Helm and
 Flux's helm-controller both run `lookup` and are covered.
