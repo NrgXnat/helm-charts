@@ -196,8 +196,8 @@ template` it returns nothing and the render succeeds silently.
 when it is pruned, and a render-and-apply pipeline ignores it. Since those
 pipelines are the ones that prune, do the copy above by hand, and make sure
 the three claims carry `argocd.argoproj.io/sync-options: Prune=false` before
-this upgrade. Chart 3.3.1 stamps that on them, so on Argo upgrade through
-3.3.1 first; otherwise annotate them yourself. After that, a missed copy
+this upgrade. Chart 3.4.1 stamps that on them, so on Argo upgrade through
+3.4.1 first; otherwise annotate them yourself. After that, a missed copy
 stops at `home-init` on the root-owned old mount points rather than pruning
 the archive. From 4.0 every claim and PV the chart renders carries both
 annotations, with the same `keep: false` opt-out. `ignoreDifferences` will **not** save them — it suppresses
