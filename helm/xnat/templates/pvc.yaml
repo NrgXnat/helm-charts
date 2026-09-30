@@ -9,6 +9,17 @@ metadata:
   name: {{ include "xnat.fullname" $context }}-{{ $name }}
   labels:
     {{- include "xnat.labels" $context | nindent 4 }}
+  {{- if has $name (list "archive" "prearchive" "cache") }}
+  annotations:
+    # 4.0 stops rendering these three claims: archive, prearchive and cache
+    # become directories on the xnatdata mount. Helm and Flux are stopped from
+    # deleting them by a guard in 4.0, but a render-and-apply pipeline such as
+    # Argo CD is not -- it would prune them, and with reclaimPolicy: Delete the
+    # data goes too. Stamping this while 3.x still renders the claims means
+    # Argo refuses that prune. Deliberately not helm.sh/resource-policy: keep,
+    # which 4.0's guard reads as "the data has been moved".
+    argocd.argoproj.io/sync-options: Prune=false
+  {{- end }}
 spec:
   accessModes: [ {{ $c.accessMode | quote }} ]
   volumeMode: Filesystem
