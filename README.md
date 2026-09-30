@@ -128,7 +128,7 @@ removed, and offers four ways forward:
 | | what to do |
 | --- | --- |
 | keep the split layout | set `volumes.<name>.size` back to the request the live claim already has, leaving its `accessMode` and `storageClass` in place |
-| adopt a claim where it is | point `volumes.<name>.existingClaim` at it **and** annotate it `helm.sh/resource-policy=keep` — an `existingClaim` is not rendered either, so the annotation is what stops Helm removing it. For an `nfs`/`hostVolume` claim the chart also stops rendering its PersistentVolume, which nothing checks — annotate that too |
+| adopt a claim where it is | point `volumes.<name>.existingClaim` at it **and** annotate it `helm.sh/resource-policy=keep` and `xnat.org/legacy-claim=handled` — an `existingClaim` is not rendered either, so `keep` is what stops Helm removing it, and the marker is what tells the guard you meant it. For an `nfs`/`hostVolume` claim the chart also stops rendering its PersistentVolume, which nothing checks — annotate that too |
 | move to the single mount | copy the data **before** upgrading, as below |
 | let one go | nothing you want is on it: `kubectl -n <ns> delete pvc <name>` yourself. There is no values-level opt-out |
 
@@ -139,9 +139,13 @@ orphaned claims are also unmounted by then, so the copy needs a helper pod that
 mounts both.
 
 Do all of it outside Helm first, then upgrade once. The deletion guard blocks
-every upgrade while an unannotated claim exists, and the annotation is what
-makes upgrading safe — so you cannot grow `xnatdata` through Helm before the
-copy, and you must not annotate before it either:
+every upgrade until each claim carries `xnat.org/legacy-claim=handled`, and
+that marker is what makes upgrading safe — so you cannot grow `xnatdata`
+through Helm before the copy, and you must not set the marker before it
+either. `helm.sh/resource-policy: keep` alone does not clear the guard: the
+chart sets that itself, on any of the three it still renders and, from 3.4.1,
+on all three, so it says nothing about whether the data was copied. The marker
+is never rendered by the chart.
 
 ```console
 # grow xnatdata in place; needs a class with allowVolumeExpansion
@@ -150,7 +154,7 @@ kubectl -n <ns> patch pvc <fullname>-xnatdata --type merge \
 
 kubectl -n <ns> scale statefulset <fullname> --replicas=0
 # copy each claim into the matching directory of xnatdata as root, then chown -R 1000:1000
-kubectl -n <ns> annotate pvc <claims> helm.sh/resource-policy=keep  # once verified
+kubectl -n <ns> annotate --overwrite pvc <claims> helm.sh/resource-policy=keep xnat.org/legacy-claim=handled  # once verified
 ```
 
 Then set `volumes.xnatdata.size` to the size you patched in and upgrade. It

@@ -30,6 +30,13 @@ unless the live object is annotated helm.sh/resource-policy: keep. On a
 StorageClass with the default reclaimPolicy: Delete the PersistentVolume, and
 the data, go too.
 
+What clears it is xnat.org/legacy-claim: handled, not keep. The chart sets
+keep itself -- on any of the three it still renders, such as a volume kept
+split and later merged, and 3.4.1 stamps it on all three -- so keep alone
+says nothing about whether anyone copied the data. The marker is never
+rendered by this chart; only an operator who has dealt with the claim sets it.
+Keep is still required alongside it, since keep is what stops Helm deleting.
+
 The condition mirrors pvc.yaml, which renders a claim only when a size is set
 AND no existingClaim is: setting existingClaim suppresses the rendered claim
 just as an absent size does, so adopting the legacy claim that way would
@@ -42,7 +49,8 @@ otherwise delete the very claim the StatefulSet has just been pointed at.
 {{- $claim := printf "%s-%s" (include "xnat.fullname" $) $n }}
 {{- $live := lookup "v1" "PersistentVolumeClaim" $.Release.Namespace $claim }}
 {{- if $live }}
-{{- if ne (dig "metadata" "annotations" "helm.sh/resource-policy" "" $live) "keep" }}
+{{- $ann := dig "metadata" "annotations" dict $live }}
+{{- if not (and (eq (get $ann "helm.sh/resource-policy") "keep") (eq (get $ann "xnat.org/legacy-claim") "handled")) }}
 {{- $doomed = append $doomed $claim }}
 {{- end }}
 {{- end }}
@@ -67,10 +75,10 @@ Pick one, then upgrade again.
     rename, which is why this is no longer the default.
 
  2. ADOPT A CLAIM WHERE IT IS. Point volumes.<name>.existingClaim at it AND
-    annotate it -- an existingClaim is not rendered either, so the annotation
-    is what stops Helm removing it:
+    annotate it -- an existingClaim is not rendered either, so keep is what
+    stops Helm removing it, and the marker is what tells this guard you meant it:
 
-      kubectl -n %s annotate pvc <name> helm.sh/resource-policy=keep
+      kubectl -n %s annotate --overwrite pvc <name> helm.sh/resource-policy=keep xnat.org/legacy-claim=handled
 
     If it is an nfs or hostVolume claim, this chart also stops rendering its
     PersistentVolume, which nothing here checks. Annotate that too:
@@ -78,8 +86,8 @@ Pick one, then upgrade again.
       kubectl annotate pv <pv-name> helm.sh/resource-policy=keep
 
  3. MOVE TO THE SINGLE MOUNT. Do all of it outside Helm first. This guard
-    blocks every upgrade while an unannotated claim exists, and the annotation
-    is what makes upgrading safe -- so growing xnatdata through Helm before
+    blocks every upgrade while a claim lacks the marker, and the marker is
+    what makes upgrading safe -- so growing xnatdata through Helm before
     the copy is not a step you can take.
 
       # grow xnatdata in place; needs a class with allowVolumeExpansion
@@ -97,8 +105,8 @@ Pick one, then upgrade again.
       # xnatdata root itself must be writable by uid 1000 too; the chart
       # README has an initContainer for that.
 
-      # only once the copy is verified -- this is what silences this guard
-      kubectl -n %s annotate pvc %s helm.sh/resource-policy=keep
+      # only once the copy is verified -- the marker is what silences this guard
+      kubectl -n %s annotate --overwrite pvc %s helm.sh/resource-policy=keep xnat.org/legacy-claim=handled
 
     Then set volumes.xnatdata.size to the size you patched in and upgrade. It
     matches the live claim by then, so the resize guard stays quiet and you do
