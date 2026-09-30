@@ -58,14 +58,18 @@ otherwise delete the very claim the StatefulSet has just been pointed at.
 {{- end }}
 {{- if $doomed }}
 {{- fail (printf `
-Upgrading would DELETE these claims, which still exist in %s:
+These claims still exist in %s and would leave the release on this upgrade:
 
     %s
 
 Chart 4.0.0 makes archive, prearchive and cache directories on the xnatdata
-mount, so they are no longer part of the release. Helm removes what leaves a
-release, and on a StorageClass with reclaimPolicy: Delete that destroys the
-PersistentVolume and everything in it.
+mount, so they are no longer part of the release. Helm deletes what leaves a
+release unless it carries helm.sh/resource-policy: keep, and on a StorageClass
+with reclaimPolicy: Delete that destroys the PersistentVolume and everything in
+it. With keep -- which 3.4.1 sets -- the claims survive but are no longer
+mounted, and XNAT comes up on empty directories under xnatdata. Either way
+nothing has been checked off yet: this clears only once each claim also
+carries xnat.org/legacy-claim: handled.
 
 Pick one, then upgrade again.
 
