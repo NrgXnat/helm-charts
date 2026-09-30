@@ -226,6 +226,27 @@ Two smaller changes in the same release:
   adopts them — which is why the resize guard runs on install too, not only on
   upgrade.
 
+### Tomcat keep-alive now outlives the proxy's idle timeout
+
+Stock Tomcat closes an idle keep-alive connection after `connectionTimeout`
+(20s in the images this chart deploys). Proxies keep pooled upstream
+connections longer (AWS ALB 60s, Traefik 90s), so a request can land on a
+socket Tomcat is closing and fail as an intermittent 502. `home-init` now sets
+`keepAliveTimeout` on the live 8080 Connector, default `120000` ms:
+
+```yaml
+tomcat:
+  keepAliveTimeout: 120000  # ms; keep it above the proxy's idle timeout
+```
+
+`null` leaves the image's value and `-1` means no timeout. An image that
+already sets `keepAliveTimeout` has it replaced; one written in a form
+`home-init` cannot strip (say, split across lines) is kept with a warning, and
+any `connector` mode attributes are still added. The Connector is found with the
+same comment-aware locator as `connector` mode below; if `server.xml` has no
+recognisable live `<Connector port="8080"`, `home-init` warns and leaves the
+file alone, unless `tomcat.proxy.mode=connector`, which still fails.
+
 ### TLS-terminating proxies — Tomcat now reports the public URL
 
 Tomcat only ever sees plain HTTP on 8080, so every absolute URL XNAT builds
