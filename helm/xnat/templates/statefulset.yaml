@@ -397,21 +397,21 @@ spec:
               if [ -d /TOMCAT ]; then
                 cp -r --preserve=mode,timestamps /usr/local/tomcat/* /TOMCAT
                 {{- $proxyMode := include "xnat.tomcatProxyMode" . }}
-                {{- if eq $proxyMode "connector" }}
-                # Teach Tomcat the public scheme/host/port behind a TLS-terminating
-                # proxy. Unconditional, so in-cluster callers of the Service see
-                # these too; see "TLS-terminating proxies" in README.md.
-                PROXY_ATTRS={{ include "xnat.tomcatProxyAttrs" . | squote }}
-                # Line the live Connector's opening tag is on. Comment-aware,
-                # because stock server.xml also ships commented-out example
-                # Connectors, one of them on 8080 as well. Attributes go straight
-                # after the tag name, so this works whether the element is written
-                # on one line or spread over several.
+                {{- $keepAlive := include "xnat.tomcatKeepAliveAttr" . }}
+                {{- if or (eq $proxyMode "connector") $keepAlive }}
+                {{- $attrs := list $keepAlive }}
+                {{- if eq $proxyMode "connector" }}{{ $attrs = prepend $attrs (include "xnat.tomcatProxyAttrs" .) }}{{ end }}
+                # connector-mode proxy attrs (see "TLS-terminating proxies" in README.md) and/or keepAliveTimeout.
+                CONNECTOR_ATTRS={{ $attrs | compact | join " " | squote }}
+                # "start end" lines of the live Connector element. Comment-aware: stock
+                # server.xml also ships commented-out Connectors, one on 8080 as well.
                 mapfile -t CONNECTOR_LINES < <(awk '
                   {{- include "xnat.awkStripXmlComments" . | nindent 18 }}
-                  L ~ /^[[:space:]]*<Connector[[:space:]]+port="8080"/ { print NR }
+                  L ~ /^[[:space:]]*<Connector[[:space:]]+port="8080"/ { s = NR; pending = 1 }
+                  pending && index(L, ">") { print s, NR; pending = 0 }
                 ' /TOMCAT/conf/server.xml)
                 if [ "${#CONNECTOR_LINES[@]}" -ne 1 ]; then
+                  {{- if eq $proxyMode "connector" }}
                   echo "ERROR: expected exactly one live <Connector port=8080 ...> in /TOMCAT/conf/server.xml, found ${#CONNECTOR_LINES[@]}." >&2
                   echo "       connector mode only recognises a Connector whose port is its first" >&2
                   echo "       attribute, so this image's server.xml may simply be written another way." >&2
@@ -419,8 +419,26 @@ spec:
                   echo "       read server.xml at all; otherwise set the attributes in the image and" >&2
                   echo "       pass tomcat.proxy.mode=none." >&2
                   exit 1
+                  {{- else }}
+                  # Warn, not fail: an unpatched Connector is the image's own behaviour.
+                  echo "WARNING: expected exactly one live <Connector port=8080 ...> in /TOMCAT/conf/server.xml, found ${#CONNECTOR_LINES[@]}; tomcat.keepAliveTimeout not applied." >&2
+                  {{- end }}
+                else
+                  read -r C_START C_END <<< "${CONNECTOR_LINES[0]}"
+                  {{- if $keepAlive }}
+                  # Replace, not duplicate, an image-set keepAliveTimeout (duplicates are unparseable).
+                  sed -i -E "${C_START},${C_END}s/(^|[[:space:]]+)keepAliveTimeout[[:space:]]*=[[:space:]]*(\"[^\"]*\"|'[^']*')//" /TOMCAT/conf/server.xml
+                  if sed -n "${C_START},${C_END}p" /TOMCAT/conf/server.xml | grep -q keepAliveTimeout; then
+                    echo "WARNING: the live Connector in /TOMCAT/conf/server.xml sets keepAliveTimeout in a form home-init cannot replace; tomcat.keepAliveTimeout not applied." >&2
+                    # Keep the image's value: drop ours, always the last attr.
+                    CONNECTOR_ATTRS=${CONNECTOR_ATTRS%{{ $keepAlive | squote }}}
+                    CONNECTOR_ATTRS=${CONNECTOR_ATTRS% }
+                  fi
+                  {{- end }}
+                  if [ -n "$CONNECTOR_ATTRS" ]; then
+                    sed -i "${C_START}s|<Connector|<Connector ${CONNECTOR_ATTRS}|" /TOMCAT/conf/server.xml
+                  fi
                 fi
-                sed -i "${CONNECTOR_LINES[0]}s|<Connector|<Connector ${PROXY_ATTRS}|" /TOMCAT/conf/server.xml
                 {{- end }}
               fi
               {{- if eq $proxyMode "forwardedHeaders" }}

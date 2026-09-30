@@ -196,6 +196,16 @@ IPv6 ULA.
 {{- end -}}
 
 {{/*
+keepAliveTimeout="<ms>" for the live Connector, or "" when tomcat.keepAliveTimeout
+is null. `int` keeps the shell-interpolated value numeric; the schema bounds it.
+*/}}
+{{- define "xnat.tomcatKeepAliveAttr" -}}
+{{- if not (kindIs "invalid" .Values.tomcat.keepAliveTimeout) -}}
+keepAliveTimeout="{{ int .Values.tomcat.keepAliveTimeout }}"
+{{- end -}}
+{{- end -}}
+
+{{/*
 The public hostname for connector mode: tomcat.proxy.host, else one borrowed
 from the Ingress this chart renders. Empty when it renders none and none was
 given -- the bring-your-own-ingress case, where only tomcat.proxy.host can
