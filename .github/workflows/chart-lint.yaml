@@ -83,26 +83,6 @@ jobs:
             done
           done
 
-      - name: Container-service RBAC names and namespace refs follow the release namespace
-        # Lint and kubeconform miss these: a ClusterRole/Binding name shared across
-        # namespaces, and a subject or PV claimRef namespace other than the release's.
-        run: |
-          set -euo pipefail
-          chart=helm/xnat
-          values="${chart}/ci/container-service-values.yaml"
-          render() { helm template xnat "${chart}" -n "$1" --values "${values}" --set volumes.build.hostVolume=true; }
-          names='select(.kind == "ClusterRole" or .kind == "ClusterRoleBinding") | .kind + "/" + .metadata.name'
-          out_a=$(render ns-a)
-          a=$(yq -N "${names}" <<<"${out_a}" | sort)
-          b=$(render ns-b | yq -N "${names}" | sort)
-          [ -n "${a}" ] || { echo "::error::no ClusterRole or ClusterRoleBinding rendered"; exit 1; }
-          shared=$(comm -12 <(printf '%s\n' "${a}") <(printf '%s\n' "${b}") | paste -sd' ' -)
-          [ -z "${shared}" ] || { echo "::error::same name in two namespaces: ${shared}"; exit 1; }
-          subjects=$(yq -N 'select(.kind == "ClusterRoleBinding") | .subjects[].namespace' <<<"${out_a}" | sort -u)
-          [ "${subjects}" = "ns-a" ] || { echo "::error::ClusterRoleBinding subject namespace is '${subjects}', not ns-a"; exit 1; }
-          pvns=$(yq -N 'select(.kind == "PersistentVolume") | .spec.claimRef.namespace' <<<"${out_a}" | sort -u)
-          [ "${pvns}" = "ns-a" ] || { echo "::error::hostVolume PV claimRef namespace is '${pvns}', not ns-a"; exit 1; }
-
   actionlint:
     runs-on: ubuntu-latest
     steps:

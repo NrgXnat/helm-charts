@@ -1,6 +1,6 @@
 # Covers the nfs branch of pv.yaml: its capacity guard, the keep annotation on
 # the rendered PersistentVolume, and the <pathPrefix>/<name> layout the 4.0
-# migration note describes. No other fixture sets nfs or hostVolume.
+# migration note describes. No other fixture sets nfs.
 cnpg:
   cluster:
     credentials:

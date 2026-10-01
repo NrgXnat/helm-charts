@@ -1,5 +1,4 @@
-# Renders the container-service RBAC, which no other fixture enables. chart-lint
-# also renders this into two namespaces to check the cluster-scoped names.
+# Renders the container-service Role and RoleBinding, which no other fixture enables.
 cnpg:
   cluster:
     credentials:
