@@ -42,9 +42,9 @@ patch or post-renderer, an extra binding) needs the new name: a patch with a
 the `claimRef` of `hostVolume` PersistentVolumes read it, so leaving it empty
 used to render a binding the API server rejects and claims that never bind.
 
-Upgrading creates the new pair and deletes the old one, even if another release
-on an older chart applied it last; that release runs without it until it
-upgrades too. The pair grants only `get` on `/readyz` and `/readyz/*`. The
+A Helm upgrade creates the new pair and deletes the old one, even if another
+release on an older chart applied it last; that release runs without it until
+it upgrades too. Argo CD removes the old pair only when pruning is on. The pair grants only `get` on `/readyz` and `/readyz/*`. The
 container-service plugin (through 3.8.2) calls neither, and default Kubernetes
 RBAC already lets every ServiceAccount read `/readyz`.
 
