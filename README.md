@@ -25,6 +25,33 @@ merge to `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#versioning-automated).
 
 ## Upgrade notes
 
+### Container service: the `cs-ready` ClusterRole and binding are gone
+
+`containerService: true` no longer renders the ClusterRole and
+ClusterRoleBinding `<fullname>-cs-ready`. They granted only `get` on `/readyz`
+and `/readyz/*`, which the container-service plugin's Kubernetes backend (3.2.0
+through 3.8.2) doesn't request: its calls are for pods, pods/log and jobs in the
+release namespace, granted by the Role and RoleBinding `<fullname>-cs`, which
+stay. Default RBAC already lets every authenticated client `get /readyz`; only
+per-check paths such as `/readyz/etcd` lose access.
+
+That removes three problems: the binding failed admission unless `namespace`
+was set; same-named releases in different namespaces shared one cluster-scoped
+pair, which plain Helm refused and `--take-ownership` (the default in Flux's
+helm-controller) silently handed between them; and installing needed rights to
+create cluster-scoped RBAC.
+
+Upgrading deletes the old pair, even one another release on an older chart
+applied last; that release re-creates it on its next upgrade, and nothing reads
+it either way. Argo CD removes it only with pruning on. A kustomize patch or
+post-renderer that names the pair matches nothing if it has a `target`, and
+fails the render if it doesn't. If a later plugin version needs the pair, apply
+the ClusterRole and binding from the plugin's Kubernetes setup doc alongside the
+release.
+
+`namespace` now defaults to the release namespace in the `claimRef` of
+`hostVolume` PersistentVolumes, whose claims never bound on the default `""`.
+
 ### 4.0 — one mount for archive, prearchive and cache
 
 `rename(2)` returns `EXDEV` across mount points even when both sit on one

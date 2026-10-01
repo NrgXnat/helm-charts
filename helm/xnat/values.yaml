@@ -617,6 +617,8 @@ devWar:
   sha256: ""
 
 containerService: false
+# claimRef namespace of hostVolume PVs. Defaults to the release namespace; set
+# it only when applying a `helm template` render to another namespace.
 namespace: ""
 authplugins: []
 

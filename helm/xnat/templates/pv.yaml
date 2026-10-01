@@ -56,7 +56,7 @@ spec:
     storage: {{ $c.size | quote }}
   claimRef:
     name: {{ include "xnat.fullname" $context }}-{{ $name }}
-    namespace: {{ $context.Values.namespace }}
+    namespace: {{ default $context.Release.Namespace $context.Values.namespace | quote }}
   accessModes: [ {{ $c.accessMode | quote }} ] 
   persistentVolumeReclaimPolicy: Retain
   hostPath:
