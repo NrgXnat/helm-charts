@@ -25,6 +25,29 @@ merge to `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#versioning-automated).
 
 ## Upgrade notes
 
+### Container service: the ClusterRole and binding are named per namespace
+
+`containerService: true` renders a ClusterRole and ClusterRoleBinding. They
+were named `<fullname>-cs-ready`, and a release name is unique only within its
+namespace, so two releases called `xnat` in different namespaces rendered the
+same pair. Plain Helm stopped the second release at its ownership check. With
+`--take-ownership`, the default in Flux's helm-controller, the second release
+adopted the pair and pointed the binding at its own ServiceAccount, and
+uninstalling either release deleted the pair for both. They are now named
+`<fullname>-<namespace>-cs-ready`. Anything that names the old pair (a kustomize
+patch or post-renderer, an extra binding) needs the new name: a patch with a
+`target` silently stops applying, and one without fails the render.
+
+`namespace` now defaults to the release namespace. The binding's subject and
+the `claimRef` of `hostVolume` PersistentVolumes read it, so leaving it empty
+used to render a binding the API server rejects and claims that never bind.
+
+Upgrading creates the new pair and deletes the old one, even if another release
+on an older chart applied it last; that release runs without it until it
+upgrades too. The pair grants only `get` on `/readyz` and `/readyz/*`. The
+container-service plugin (through 3.8.2) calls neither, and default Kubernetes
+RBAC already lets every ServiceAccount read `/readyz`.
+
 ### 4.0 — one mount for archive, prearchive and cache
 
 `rename(2)` returns `EXDEV` across mount points even when both sit on one

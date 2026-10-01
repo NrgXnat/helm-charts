@@ -1,0 +1,7 @@
+# Renders the container-service RBAC, which no other fixture enables. chart-lint
+# also renders this into two namespaces to check the cluster-scoped names.
+cnpg:
+  cluster:
+    credentials:
+      password: ci
+containerService: true

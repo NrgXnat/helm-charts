@@ -71,6 +71,21 @@ Create the name of the service account to use
 {{- end }}
 {{- end }}
 
+{{/*
+Namespace the release runs in, unless .Values.namespace overrides it.
+*/}}
+{{- define "xnat.namespace" -}}
+{{- default .Release.Namespace .Values.namespace }}
+{{- end }}
+
+{{/*
+Container-service ClusterRole/ClusterRoleBinding name. Both are cluster-scoped
+and release names are unique only per namespace, so it includes the namespace.
+*/}}
+{{- define "xnat.csReadyName" -}}
+{{- printf "%s-%s-cs-ready" (include "xnat.fullname" .) (include "xnat.namespace" .) }}
+{{- end }}
+
 {{- define "xnat.domain" -}}
 {{- if .Values.global.domain }}
 {{- .Values.global.domain }}

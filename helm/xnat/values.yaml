@@ -617,6 +617,8 @@ devWar:
   sha256: ""
 
 containerService: false
+# Defaults to the release namespace. Set it only when applying a `helm template`
+# render to a namespace other than the one it was rendered with.
 namespace: ""
 authplugins: []
 
