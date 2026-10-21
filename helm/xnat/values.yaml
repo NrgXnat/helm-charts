@@ -1,15 +1,82 @@
 # Default values for xnat.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
+
+# Native XNAT stdout logging (XNAT-8782 / NrgXnat/xnat#23). Sets the XNAT_LOG_CONSOLE
+# env var: on XNAT builds that support it, redirects all logging -- core and plugins --
+# to the container's stdout instead of files.
+#   plain -> plain-text console
+#   json  -> structured JSON (LogstashEncoder), for log aggregation (e.g. OpenSearch)
+#   ""    -> leave XNAT's file logging as configured
+# Ignored by images that predate the variable, so it is safe to set unconditionally.
+logConsole: plain
+
+# Extra environment variables for the xnat container, as raw Kubernetes env
+# entries (supports `value` and `valueFrom`). For any setting the chart does not
+# expose a first-class value for. Do NOT set XNAT_LOG_CONSOLE here -- it is owned
+# by `logConsole` above (duplicate env names are last-wins and confusing).
+# Example:
+#   extraEnv:
+#     - name: SOME_FLAG
+#       value: "true"
+#     - name: SOME_SECRET
+#       valueFrom:
+#         secretKeyRef: { name: my-secret, key: token }
+extraEnv: []
+
+# Postfix relay subchart (bokysan/docker-postfix): the in-cluster relay
+# XNAT's [notifications] SMTP settings point at; the relay authenticates
+# onward to your real mail provider. Disable it if XNAT talks to an
+# external SMTP server directly, or for dev/test installs that use the
+# mailpit sink below instead.
 mail:
+  enabled: false # Set to true to deploy bundled postfix relay
   existingSecret: postfix-password
   config:
     general:
       ALLOWED_SENDER_DOMAINS: "xnat.org"
-      RELAYHOST: "smtp.myrelay.net:587"
+      # REQUIRED when mail.enabled -- no default; set your real SMTP
+      # relay here. Render fails if mail.enabled and this is empty.
+      RELAYHOST: ""
       RELAYHOST_USERNAME: apikey
       #RELAYHOST_PASSWORD: ${RELAYHOST_PASSWORD}
       MASQUERADED_DOMAINS: "xnat.org"
+
+# SMTP sink for dev/test installs: accepts every message, stores it
+# in-container (browse/inspect via web UI and JSON API on port 8025),
+# and architecturally cannot relay anything onward. Point XNAT's
+# [notifications] SMTP host at <release>-mailpit:1025. Typically paired
+# with mail.enabled=false. Messages are capped (oldest pruned) and die
+# with the pod -- this is a sink, not a mailbox.
+mailpit:
+  enabled: false
+  # Independent scheduling + replica count (not inherited from the xnat
+  # pod): a test sink can sit on the general pool and scale to 0 when idle
+  # -- an orchestrator scales it up per run -- instead of occupying the
+  # xnat pod's tainted/sized nodes. replicaCount: 0 = scaled down.
+  replicaCount: 1
+  nodeSelector: {}
+  tolerations: []
+  image: axllent/mailpit:v1.30.1
+  maxMessages: 500
+  # Matches the xnat container's hardening so the sink also passes
+  # "restricted" Pod Security Admission. Override if your image needs root.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
 
 # In order to use the following activemq section you must install the Ark-MQ broker found at
 # https://github.com/arkmq-org/activemq-artemis-operator/blob/main/docs/getting-started/quick-start.md
@@ -18,7 +85,9 @@ activemq:
   broker:
     enabled: false
     user: admin
-    password: "admin"
+    # No default password. Set this (or activemq.existingSecret) when the broker
+    # is enabled, otherwise install fails fast instead of shipping a known one.
+    password: ""
     port: 62626
     # Passed directly to the broker. See the official documentation for arguments that can be placed here.
     deploymentPlan:
@@ -31,9 +100,9 @@ activemq:
 replicaCount: 1
 
 image:
-  repository: xnatworks/xnat-web
+  repository: ghcr.io/nrgxnat/xnat-web
   # Overrides the image tag whose default is the chart appVersion.
-  tag: "1.9.2.1"
+  tag: "1.9.3.7"
 imagePullPolicy: IfNotPresent
 
 imagePullSecrets: null
@@ -41,8 +110,14 @@ imagePullSecrets: null
 nameOverride: ""
 fullnameOverride: ""
 
+# XNAT core does not consume Redis (it uses an on-heap Hibernate L2 cache, and
+# no template wires a Redis host/port into XNAT's config). The legacy Ansible
+# deploy also ran with this off. Left here, off by default, as an optional
+# dependency for setups that wire Redis themselves; enabling it otherwise just
+# schedules an unused pod (and pulls a Bitnami image subject to the public
+# registry's deprecation).
 redis:
-  enabled: true
+  enabled: false
   pullPolicy: IfNotPresent
   master:
     masterCount: 1
@@ -56,6 +131,10 @@ redis:
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
+  # Mount the SA token into the pod. null = mount only when containerService is
+  # enabled (the only feature that calls the Kubernetes API); set true/false to
+  # force it. XNAT itself does not need the token.
+  automountServiceAccountToken: null
   # Annotations to add to the service account
   annotations: {}
   # The name of the service account to use.
@@ -123,6 +202,35 @@ ingress:
 #      hosts:
 #        - xnat.local
 
+# Tomcat sits behind a TLS-terminating proxy and is reached over plain HTTP on
+# 8080, so the absolute URLs XNAT builds come out http://<backend>:8080/... and
+# XNAT 1.10.1's form-action CSP makes the browser block the post-login redirect.
+# home-init configures Tomcat to fix that. The modes differ in what they do to
+# requests that did NOT come through the proxy -- the container service and
+# other in-cluster callers of the Service. Read "TLS-terminating proxies" in
+# the README before changing any of this.
+tomcat:
+  # HTTP Connector idle keep-alive, ms. Keep it above the fronting proxy's idle timeout
+  # (ALB 60s, Traefik 90s) or reused upstream connections 502; null keeps the image's (20s).
+  keepAliveTimeout: 120000
+
+  proxy:
+    # forwardedHeaders (default; a RemoteIpValve, safe to leave on) | connector | none
+    mode: forwardedHeaders
+
+    # forwardedHeaders only. internalProxies is a Java regex of the source
+    # addresses trusted to have set the headers; empty means Tomcat's own
+    # default, which already covers the ordinary cluster ranges.
+    internalProxies: ""
+    protocolHeader: X-Forwarded-Proto
+
+    # connector only. An empty host is borrowed from the Ingress this chart
+    # renders; `secure` is derived from the scheme, and an unset port follows it
+    # (443 for https, 80 for http).
+    host: ""
+    port: null
+    scheme: https
+
 hostAliases: null
 
 # XNAT is a memory-hungry Tomcat app. These requests give the pod a Burstable
@@ -178,17 +286,64 @@ lifecycle:
     exec:
       command: ["sh", "-c", "sleep 20"]
 
-# `helm test` connection check: a Pod (helm.sh/hook: test) that polls XNAT's
-# /xapi/siteConfig/buildInfo through the Service. Run it with
+# `helm test` connection check: a Pod (helm.sh/hook: test) that requests XNAT's
+# public build-info endpoint through the Service. Run it with
 # `helm test <release>`; the hook Pod is only created during a test run.
 tests:
   enabled: true
   image: busybox:1.36
-  # Endpoint polled through the Service. buildInfo is XNAT's canonical, public
-  # health endpoint; override if your deployment serves it elsewhere or gates it.
+  # Custom images must provide sh, seq, timeout, wget and sleep.
+  # This checks HTTP reachability, not database or plugin health. Override the
+  # path if your deployment uses a context prefix or gates this endpoint.
   path: /xapi/siteConfig/buildInfo
   retries: 10
   retryDelaySeconds: 6
+  # Maximum time for each request, including DNS lookup and redirects.
+  timeoutSeconds: 10
+
+# Prometheus metrics. XNAT/Tomcat exposes no native /metrics, so JVM and Tomcat
+# MBeans are surfaced via the standard Prometheus JMX java agent. Everything
+# here is additive and off by default.
+metrics:
+  jmx:
+    enabled: false
+    # The agent serves unauthenticated, unencrypted metrics on this port (bound
+    # to all interfaces). It is added only to the in-cluster ClusterIP Service,
+    # never the Ingress; restrict scrape access with a NetworkPolicy admitting
+    # only your Prometheus.
+    port: 9404
+    # Image containing the jmx_prometheus_javaagent jar; an init container
+    # copies the jar out of it into a shared volume. No default (the agent has
+    # no single canonical image), so this is required when metrics.jmx.enabled
+    # is true. The jar is loaded in-process by the XNAT JVM, so prefer a
+    # digest-pinned image from a registry you trust (e.g. an org mirror).
+    image: ""
+    # Path to the agent jar inside metrics.jmx.image. Verify for your image,
+    # e.g. `docker run --rm <image> find / -name 'jmx_prometheus_javaagent*.jar'`.
+    agentJarPath: "/opt/jmx_exporter/jmx_prometheus_javaagent.jar"
+    resources: {}
+    # JMX rules rendered into a ConfigMap and read by the agent.
+    # whitelistObjectNames bounds cardinality by querying only core JVM and
+    # Tomcat MBeans; a bare rules: [".*"] with no whitelist exports every MBean
+    # in the JVM (often 1000+ series per pod) and can overwhelm Prometheus.
+    # Widen the whitelist for more coverage.
+    config:
+      lowercaseOutputName: true
+      lowercaseOutputLabelNames: true
+      whitelistObjectNames:
+        - "java.lang:*"
+        - "Catalina:type=GlobalRequestProcessor,name=*"
+        - "Catalina:type=ThreadPool,name=*"
+      rules:
+        - pattern: ".*"
+  # Emit a Prometheus Operator ServiceMonitor scraping metrics.jmx.port.
+  # Requires metrics.jmx.enabled (nothing exposes metrics otherwise) and the
+  # monitoring.coreos.com CRDs to be present on the cluster.
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    additionalLabels: {}
 
 nodeSelector: {}
 
@@ -216,6 +371,18 @@ nfs:
   mountOptions: []
 
 volumes:
+  # archive, prearchive and cache are directories on this mount, not volumes of
+  # their own: rename(2) is EXDEV across mounts, so splitting them makes every
+  # prearchive->archive move a copy. This one volume holds all three, so size
+  # it against your data: 1Ti is a starting point, not a calculation. 3.x
+  # defaulted to 2.1Ti across the three it replaces (archive 100Gi, prearchive
+  # 1Ti, cache 1Ti), so a site that took those defaults needs more than this.
+  #
+  # Changing a size here patches the request onto the live claim on upgrade,
+  # which a StorageClass without allowVolumeExpansion rejects outright and
+  # which is irreversible where expansion is allowed. upgrade-guard.yaml stops
+  # that happening by accident; allowResize: true means you intend it, and
+  # works on any volume here, not only this one.
   xnatdata:
     nfs: false
     hostVolume: false
@@ -223,8 +390,13 @@ volumes:
     accessMode: ReadWriteMany
     mountPath: "/data/xnat"
     storageClass: "default"
-    size: 100Gi
+    size: 1Ti
+    allowResize: false
+  # Separate by design: regenerable scratch, and often better on local disk.
+  # keep: false lets `helm uninstall` reclaim it; every other volume defaults
+  # to keeping its claim, so data outlives a removal from values.
   build:
+    keep: false
     nfs: false
     hostVolume: false
     existingClaim:
@@ -232,6 +404,11 @@ volumes:
     mountPath: "/data/xnat/build"
     storageClass: "default"
     size: 100Gi
+  # size: null means no volume and no mount, so each is a plain directory on
+  # xnatdata. Giving one a size splits it back out into its own claim, at the
+  # cost above; accessMode and storageClass stay because the claim is
+  # rendered from them, and mountPath because the mount is.
+  # An existingClaim is mounted whether or not a size is set.
   cache:
     nfs: false
     hostVolume: false
@@ -239,7 +416,7 @@ volumes:
     accessMode: ReadWriteMany
     mountPath: "/data/xnat/cache"
     storageClass: "default"
-    size: 1Ti
+    size: null
   archive:
     nfs: false
     hostVolume: false
@@ -247,7 +424,7 @@ volumes:
     accessMode: ReadWriteMany
     mountPath: "/data/xnat/archive"
     storageClass: "default"
-    size: 100Gi
+    size: null
   prearchive:
     nfs: false
     hostVolume: false
@@ -255,7 +432,7 @@ volumes:
     accessMode: ReadWriteMany
     mountPath: "/data/xnat/prearchive"
     storageClass: "default"
-    size: 1Ti
+    size: null
 
 # Any extra volumes can be defined here and will be inserted into the chart as written
 extraVolumes: []
@@ -265,18 +442,198 @@ extraVolumeMounts: []
 initContainers: []
 
 # Extra lines can be added to the config secret 
-extraConfig: []
+extraConfig: {}
 # "key": "value"
 
 # Setting to false will prevent creation of the config secret.
 # A secret with the contents of xnat-conf.properties named the same as the release name will need to be created manually.
 createConfigSecret: true
 
-plugins: []
+# Unified plugin declaration: each entry is IMAGE form (backward compat),
+# SOURCE form (url|coordinates|file, via the plugin-installer init container),
+# or S3 form (a pre-staged JAR copied with the AWS CLI). All render from this
+# one map; pick per plugin.
+plugins: {}
+  # Image form — pre-built plugin OCI image (its entrypoint copies the JAR in):
   # container-service:
   #  repository: radiologicsit/container-service
   #  tag: "3.3.0"
+  # Source form — pull a raw JAR via the plugin-installer init container:
+  # container-service:
+  #  source: coordinates        # url | coordinates | file | s3
+  #  coordinates: org.nrg.xnatx.plugins:container-service:3.8.1:jar:fat
+  #                             # resolved against pluginRepository.mavenUrl.
+  #                             #   RELEASE VERSIONS ONLY -- a -SNAPSHOT is
+  #                             #   rejected while rendering. A snapshot's filename
+  #                             #   carries the deploy timestamp and build number,
+  #                             #   which only maven-metadata.xml knows, and the
+  #                             #   chart resolves coordinates with no network
+  #                             #   access. That is the tradeoff that puts the exact
+  #                             #   url in the rendered manifest and keeps the init
+  #                             #   container a plain fetch.
+  #                             #   For a snapshot: name it directly with
+  #                             #   `source: url` (the timestamped filename), or
+  #                             #   stage the jar and use `source: s3`,
+  #                             #   `source: file` or `devPlugins` -- which is what
+  #                             #   a dev side-load does anyway.
+  #  mavenUrl: ""               # optional; overrides pluginRepository.mavenUrl for
+  #                             #   this plugin, when it lives in its own repository
+  #  url: https://.../foo.jar   # for source: url; if it is private, see
+  #                             #   pluginInstaller.credentials
+  #  file: /mnt/foo/bar.jar     # for source: file -- a path already in the pod
+  #  secret:                    # for source: file -- a Secret holding the jar,
+  #    name: xnat-plugin-foo    #   mounted by the chart (use instead of `file`)
+  #    key: plugin.jar
+  #  sha256: ""                 # optional; the fetched bytes are verified before the
+  #                             #   jar is moved into place, so a mismatch fails the
+  #                             #   pod rather than installing it. Release urls and
+  #                             #   repository paths are both mutable, so pin
+  #                             #   anything you need to be reproducible.
+  #  target: ""                 # output filename in the plugins dir; default <name>.jar
+  # S3 form — `aws s3 cp` a pre-staged JAR using the pod's IRSA role (no installer image):
+  # container-service:
+  #  source: s3
+  #  s3Uri: s3://bucket/key.jar # optional; default s3://<pluginInstaller.s3.bucket>/<prefix>/<target>
+  #  target: ""                 # output filename; default <name>.jar
+# Optional mirror for `source: url` plugins above. A plugin url beginning with
+# matchPrefix is rewritten onto baseUrl with the rest of the path preserved, so
+#   https://github.com/NrgXnat/container-service/releases/download/3.8.1/cs.jar
+# with baseUrl https://nexus.example.org/repository/github-raw becomes
+#   https://nexus.example.org/repository/github-raw/NrgXnat/container-service/releases/download/3.8.1/cs.jar
+# which is the path layout a Nexus `raw` proxy of https://github.com/ already
+# serves. Airgapped sites point baseUrl at a `raw` hosted repository seeded with
+# the same jars and leave the plugin list alone.
+#
+# Urls that do not begin with matchPrefix are used as written, so a plugin
+# published elsewhere is never silently redirected into the mirror. Leave baseUrl
+# empty to disable rewriting. Does not affect coordinates/file/s3 sources.
+pluginRepository:
+  baseUrl: ""
+  # Keep the trailing slash: it pins the match to a host boundary. Without it
+  # "https://github.com" also prefix-matches a lookalike host such as
+  # "https://github.com.example.org/...", which would then be rewritten into the
+  # mirror. A prefix naming a path (".../NrgXnat") is matched as written.
+  matchPrefix: "https://github.com/"
+  # Repository base that `source: coordinates` plugins resolve against. The
+  # installer turns the coordinate into a repository-relative path and fetches it
+  # from here, so pointing this at a Maven proxy/group redirects every coordinate
+  # plugin at once -- which is what an air-gapped deploy changes. Required when
+  # any plugin uses `source: coordinates`.
+  mavenUrl: ""
+
+# Init-container image that installs source-form (url|coordinates|file) plugins
+# above (the xnat-plugin-installer). Required only when a plugins entry sets
+# `source` to one of those; the deployer supplies the image ref (not defaulted).
+pluginInstaller:
+  # Image the url/coordinates/file init containers run in. They only curl (or cp)
+  # the jar into the plugins volume and checksum it, so a stock curl image is all
+  # that is needed -- there is no XNAT-specific installer to build. Override to
+  # pin a digest or to name a mirrored ref; air-gapped clusters pull this through
+  # their image proxy like any other image.
+  image: curlimages/curl:8.11.1
+  # Applied to every source-form init container. The installer needs no
+  # capabilities: it writes only to the shared plugins volume.
+  securityContext: {}
+  #  runAsNonRoot: true
+  #  runAsUser: 1000
+  #  allowPrivilegeEscalation: false
+  #  capabilities: {drop: ['ALL']}
+  #  seccompProfile: {type: RuntimeDefault}
+  # Secret with a `ca.crt` key, mounted so the installer trusts a mirror serving
+  # a self-signed certificate. Applies to url and coordinates sources.
+  caCertSecret: ""
+  # Request headers for plugins that live somewhere private -- a GitHub bot
+  # token, a Nexus/Artifactory login, a GitLab job token. Each entry pairs url
+  # prefixes with the headers to send when a `source: url` or
+  # `source: coordinates` fetch matches; first match wins, and a plugin on an
+  # unlisted host is fetched with no credential. Prefixes match the url actually
+  # fetched, i.e. after any pluginRepository.baseUrl rewrite.
+  #
+  # `valueFrom` keeps the credential out of the rendered manifest; `value` is a
+  # literal. A Secret under a header other than `Authorization` refuses
+  # redirects, since curl would carry it to the target; `followRedirects: true`
+  # allows them anyway.
+  #
+  # Worked examples and the rules a prefix must satisfy:
+  # examples/xnat/pluginCredentials.yml
+  credentials: []
+  #  - matchPrefixes: [https://api.github.com/]
+  #    headers:
+  #      - name: Authorization
+  #        valuePrefix: "Bearer "     # optional; prepended to the Secret's value
+  #        valueFrom:
+  #          secretKeyRef: {name: xnat-plugin-github-token, key: token}
+  #      - name: Accept
+  #        value: application/octet-stream
+  # S3 plugin install via `aws s3 cp` (no custom image) using the pod's IRSA
+  # role -- set serviceAccount.annotations."eks.amazonaws.com/role-arn".
+  # `image` is a stock AWS CLI image (pin a tag in production). Two modes:
+  #   - per-plugin: a plugins entry with `source: s3` (URI defaults to
+  #     s3://<bucket>/<prefix>/<target>, or per-plugin s3Uri).
+  #   - syncPrefix: true -> ONE init container copies the whole
+  #     s3://<bucket>/<prefix>/ tree into the plugins dir. The plugin set is
+  #     whatever is staged there -- no per-plugin list (leave plugins: {}).
+  s3:
+    image: public.ecr.aws/aws-cli/aws-cli:latest
+    bucket: ""
+    prefix: ""
+    region: ""
+    syncPrefix: false
+    # Any S3-compatible store (MinIO, Ceph, ...) rather than AWS. With
+    # endpointUrl empty the CLI talks to AWS and authenticates with the pod's
+    # IRSA role, as before.
+    endpointUrl: ""
+    # Secret supplying static credentials, for a store that has no IRSA. Its keys
+    # are passed through as environment variables, so it needs AWS_ACCESS_KEY_ID
+    # and AWS_SECRET_ACCESS_KEY (a Secret keyed differently can be remapped with
+    # secretKeys below).
+    existingSecret: ""
+    # Optional: map a differently-keyed Secret onto the AWS variable names, e.g.
+    #   secretKeys: {accessKeyId: S3_USER, secretAccessKey: S3_PASS}
+    secretKeys: {}
+# DEVELOPMENT AND TESTING ONLY: side-load locally built plugin jars.
+#
+# Every jar under s3Uri is copied into the plugins directory *after* the `plugins`
+# entries above, so a jar staged here overrides a declared plugin of the same
+# filename -- which is the point of a side-load. That ordering is why this is a
+# separate value from pluginInstaller.s3.syncPrefix: syncPrefix installs a release
+# set and runs first, so it can never silently outrank a pinned per-plugin
+# version.
+#
+# Uses the pluginInstaller.s3 settings (image, endpointUrl, credentials, region).
+devPlugins:
+  enabled: false
+  # e.g. s3://my-dev-bucket/plugins/ -- a prefix, not a single object
+  s3Uri: ""
+
+# DEVELOPMENT AND TESTING ONLY: run a WAR other than the one in the image.
+#
+# An init container fetches the WAR into a volume mounted over Tomcat's webapps
+# directory, so it shadows whatever the image ships. It has to work that way:
+# home-init seeds the `tomcat` volume from the image (`cp -r /usr/local/tomcat/*`)
+# and runs last, so a WAR written into that volume is overwritten before Tomcat
+# ever sees it.
+#
+# This bypasses the image as the unit of deployment -- the WAR is assembled into
+# the pod at start-up and is not what was built, scanned or tagged. Use it to test
+# an unreleased build against a real deployment; ship a real image for anything
+# that matters.
+devWar:
+  enabled: false
+  # url | s3 | file
+  source: url
+  url: ""
+  # for source: s3 -- uses the pluginInstaller.s3 settings (image, endpointUrl,
+  # credentials, region)
+  s3Uri: ""
+  # for source: file -- a path already present in the pod
+  file: ""
+  # Optional, and worth setting: nothing else validates a side-loaded WAR.
+  sha256: ""
+
 containerService: false
+# claimRef namespace of hostVolume PVs. Defaults to the release namespace; set
+# it only when applying a `helm template` render to another namespace.
 namespace: ""
 authplugins: []
 
@@ -299,7 +656,9 @@ cnpg:
     enabled: true # Set to false to use your own DB
     name: "" # Defaults to "{release-name}-postgres"
     instances: 1
-    version: 15
+    # Pin a patch tag for reproducible builds. PG16+ is fine for new installs,
+    # but bumping the major on an existing cluster forces a major upgrade.
+    version: "15.7"
     storage:
       size: "50Gi"
       storageClass: "default"
@@ -310,19 +669,32 @@ cnpg:
       limits:
         cpu: 16
         memory: "32Gi"
-    tolerations: {}
+    tolerations: []
     nodeSelector: {}
     parameters:
       max_connections: "100"
       shared_buffers: "256MB"
       standard_conforming_strings: "off"
-    enableSuperuserAccess: true
+    # Applications don't need a postgres superuser secret exposed.
+    enableSuperuserAccess: false
     credentials:
-      # Always use an external secret for production deployments.
+      # When set, the XNAT JDBC datasource password is sourced from this
+      # existing Secret at runtime (an init container reads it via env and
+      # writes it into xnat-conf.properties), so the password never appears in
+      # the chart-rendered config Secret. Point it at an ESO-managed Secret, or
+      # the CNPG-managed app-credentials Secret. Leave null to use the inline
+      # `password` below (dev/quickstart). Also used to bootstrap the bundled
+      # CNPG cluster when cnpg.cluster.enabled.
       externalSecret: null
+      # Key holding the password within externalSecret (CNPG basic-auth uses
+      # "password"; override for an ESO Secret with a different key).
+      externalSecretPasswordKey: password
       database: "xnat-web"
       username: "xnat-web"
-      password: "xnat-web"
+      # No default password. Provide one (or set externalSecret) when
+      # cnpg.cluster.enabled, otherwise install fails fast instead of generating
+      # a Secret with a known password.
+      password: ""
     # CNPG can include roles and services in cluster definitions.
     # See the official docs for more information
     # https://cloudnative-pg.io/docs/1.29/cloudnative-pg.v1#managedconfiguration
@@ -332,6 +704,42 @@ cnpg:
     postgresqlUri: null
     postgresqlIp: null
     postgresqlPort: null
+
+# JDBC datasource options for the external database connection. Database name,
+# user, and password come from cnpg.cluster.credentials and the host from
+# cnpg.external (the chart's existing layout); this block is the connection-mode
+# options layered on top, independent of the bundled CloudNativePG operator.
+datasource:
+  # RDS IAM database authentication (passwordless). When enabled, the config
+  # secret emits an AWS Advanced JDBC Wrapper datasource instead of plain
+  # pgjdbc: driver software.amazon.jdbc.Driver, a jdbc:aws-wrapper URL with
+  # wrapperPlugins=iam + TLS, and NO datasource.password. The login role is
+  # cnpg.cluster.credentials.username, which must already exist and be granted
+  # rds_iam on the instance; the password value is ignored. Requires:
+  #   - an image that bundles the AWS Advanced JDBC Wrapper + AWS SDK for Java
+  #     v2 (application deps, versioned with the app; set image.repository/tag)
+  #   - serviceAccount.annotations wiring an IAM identity with rds-db:connect on
+  #     arn:aws:rds-db:<region>:<acct>:dbuser:<resource_id>/<username> (IRSA or
+  #     EKS Pod Identity)
+  #   - the RDS CA bundle at sslrootcert when sslmode=verify-full (the default).
+  #     Do NOT bake it into the image: it is region-specific and AWS rotates it
+  #     on its own schedule. Provide it at the deploy layer as an operator-owned
+  #     ConfigMap mounted at dirname(sslrootcert) via extraVolumes/
+  #     extraVolumeMounts, e.g.:
+  #       kubectl create configmap rds-global-bundle --from-file=global-bundle.pem=./global-bundle.pem
+  #       extraVolumes:      [ { name: rds-ca, configMap: { name: rds-global-bundle } } ]
+  #       extraVolumeMounts: [ { name: rds-ca, mountPath: /etc/rds, readOnly: true } ]
+  #     Get the bundle from https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+  #     (or the regional bundle). Or set sslmode=require to skip cert
+  #     verification (encrypted, no bundle to manage, but no MITM protection).
+  # Creating that login role and granting it rds_iam is a one-time DB-admin
+  # step done out of band (it needs the master), not by this chart.
+  iam:
+    enabled: false
+    region: "" # e.g. us-east-1; signs the auth token. If empty the wrapper parses it from the RDS hostname, so set it explicitly only for non-RDS-shaped endpoints (e.g. postgresqlIp).
+    sslmode: "verify-full" # needs the RDS CA bundle at sslrootcert (see above); "require" skips cert verification and needs no bundle
+    sslrootcert: "/etc/rds/global-bundle.pem" # path the wrapper reads the CA from; supply via a mounted ConfigMap, do NOT bake into the image (see above)
+    wrapperPlugins: "iam"
 
 # TCP-socket probes against the http (8080) port; see statefulset.yaml for why
 # a socket check rather than an HTTP GET on a version-specific health path.

@@ -1,3 +1,5 @@
+{{/* Validate every pluginInstaller.credentials entry, matched by a plugin or not. */}}
+{{- include "xnat.assertCredentials" . -}}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -11,8 +13,13 @@ spec:
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   selector:
+    # Stable identity labels only. spec.selector is immutable, so a mutable label
+    # here (this used to include version: <appVersion>) makes every appVersion
+    # change an immutable-field update that helm upgrade cannot apply. The pod
+    # template below keeps the fuller label set; a selector being a subset of the
+    # pod labels is the intended shape, and matches every other object in the chart.
     matchLabels:
-      {{- include "xnat.statefulsetLabels" . | nindent 6 }}
+      {{- include "xnat.selectorLabels" . | nindent 6 }}
   serviceName: {{ include "xnat.fullname" . }}
   template:
     metadata:
@@ -51,19 +58,39 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
-          {{- if .Values.jvm.enabled }}
+          {{- if or .Values.jvm.enabled .Values.metrics.jmx.enabled .Values.logConsole .Values.extraEnv }}
           env:
+            {{- if or .Values.jvm.enabled .Values.metrics.jmx.enabled }}
             # JAVA_TOOL_OPTIONS is honoured by every JVM regardless of the
-            # image's launcher, so heap sizing works without knowing whether
-            # xnat-web reads JAVA_OPTS or CATALINA_OPTS. Note: the JVM logs a
-            # one-line "Picked up JAVA_TOOL_OPTIONS:" notice to stderr.
+            # image's launcher, so heap sizing (jvm.*) and the Prometheus JMX
+            # java agent (metrics.jmx) work without knowing whether xnat-web
+            # reads JAVA_OPTS or CATALINA_OPTS. The JVM logs a one-line
+            # "Picked up JAVA_TOOL_OPTIONS:" notice to stderr.
             - name: JAVA_TOOL_OPTIONS
-              value: {{ include "xnat.jvmOpts" . | trim | quote }}
+              value: {{ include "xnat.javaToolOptions" . | quote }}
+            {{- end }}
+            {{- if .Values.logConsole }}
+            # Native stdout logging on XNAT builds that support it (XNAT-8782 /
+            # NrgXnat/xnat#23): redirects all logging (core + plugins) to stdout as
+            # plain text or JSON. Ignored by images that predate the variable, so it is
+            # safe to set unconditionally.
+            - name: XNAT_LOG_CONSOLE
+              value: {{ .Values.logConsole | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            # Arbitrary extra env vars (raw Kubernetes env entries; supports value / valueFrom).
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- if .Values.metrics.jmx.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.jmx.port }}
+              protocol: TCP
+            {{- end }}
           # Probes use a TCP socket on the http port rather than an HTTP GET:
           # XNAT's health path varies by version and the old default
           # (/app/template/Login.vm#!) 404s on current xnat-web, while the #!
@@ -100,12 +127,25 @@ spec:
               subPath: passwd
             - name: tomcat
               mountPath: /usr/local/tomcat
+            {{- if .Values.devWar.enabled }}
+            # Shadows the image's webapps dir with the side-loaded WAR (dev only).
+            - name: webapps
+              mountPath: /usr/local/tomcat/webapps
+            {{- end }}
             - name: conf-catalina
               mountPath: /usr/local/tomcat/conf/Catalina
             - name: xnat-home
               mountPath: /data/xnat/home
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
+            {{- if .Values.metrics.jmx.enabled }}
+            - name: jmx-agent
+              mountPath: /jmx
+              readOnly: true
+            - name: jmx-config
+              mountPath: /etc/jmx
+              readOnly: true
+            {{- end }}
             {{- range $plugin, $p := .Values.authplugins }}
             {{- if .auth }}
             - name: auth-{{ $p.provider }}
@@ -124,7 +164,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- range $name, $c := .Values.volumes }}
-            {{- if $c.size }}
+            {{- if or $c.size $c.existingClaim }}
             - mountPath: {{ $c.mountPath | quote }}
               name: {{ $name | quote }}
               {{- if $c.mountPropagation }}
@@ -133,10 +173,136 @@ spec:
             {{- end }}
             {{- end }}
       initContainers:
+        {{- if .Values.metrics.jmx.enabled }}
+        - name: jmx-agent
+          image: {{ required "metrics.jmx.image is required when metrics.jmx.enabled (it must contain the Prometheus jmx_prometheus_javaagent jar)" .Values.metrics.jmx.image }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["sh", "-c", "cp {{ .Values.metrics.jmx.agentJarPath }} /jmx/agent.jar"]
+          {{- with .Values.metrics.jmx.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: jmx-agent
+              mountPath: /jmx
+        {{- end }}
+        {{- if .Values.pluginInstaller.s3.syncPrefix }}
+        # Bulk S3 install: copy every JAR staged under the release prefix into
+        # the shared home-plugins volume with the AWS CLI (pod IRSA role). The
+        # plugin SET is whatever was staged to S3 -- no per-plugin list to keep
+        # in sync with the release manifest.
+        - name: install-plugins-from-s3
+          image: {{ required "pluginInstaller.s3.image is required when pluginInstaller.s3.syncPrefix is set" .Values.pluginInstaller.s3.image }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- include "xnat.installerSecurityContext" . | nindent 12 }}
+          command:
+            - aws
+            {{- with .Values.pluginInstaller.s3.endpointUrl }}
+            - --endpoint-url
+            - {{ . | quote }}
+            {{- end }}
+            - s3
+            - cp
+            - --recursive
+            - {{ printf "s3://%s/%s/" (required "pluginInstaller.s3.bucket is required for syncPrefix" .Values.pluginInstaller.s3.bucket) (trimSuffix "/" (required "pluginInstaller.s3.prefix is required for syncPrefix (an empty prefix would recursively copy the whole bucket into the plugins dir)" .Values.pluginInstaller.s3.prefix)) | quote }}
+            - /data/xnat/home/plugins/
+          {{- include "xnat.s3Env" . | nindent 10 }}
+          volumeMounts:
+            - name: home-plugins
+              mountPath: /data/xnat/home/plugins
+        {{- end }}
         {{- range $plugin, $c := .Values.plugins }}
+        {{- if eq ($c.source | default "") "s3" }}
+        # S3 form: copy a pre-staged JAR from the release bucket with the AWS CLI,
+        # using the pod's IRSA role. No custom installer image and no in-cluster
+        # Maven/registry auth -- acquire (and any logback rewrite) happen at
+        # staging time, so the test pulls the exact bytes that ship.
         - name: {{ $plugin }}
-          image: "{{ $c.repository }}:{{ $c.tag }}"
+          image: {{ required "pluginInstaller.s3.image is required when a plugins entry sets source: s3" $.Values.pluginInstaller.s3.image }}
           imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          securityContext:
+            {{- include "xnat.installerSecurityContext" $ | nindent 12 }}
+          command:
+            - aws
+            {{- with $.Values.pluginInstaller.s3.endpointUrl }}
+            - --endpoint-url
+            - {{ . | quote }}
+            {{- end }}
+            - s3
+            - cp
+            - {{ $c.s3Uri | default (printf "s3://%s/%s/%s" $.Values.pluginInstaller.s3.bucket (trimSuffix "/" $.Values.pluginInstaller.s3.prefix) ($c.target | default (printf "%s.jar" $plugin))) | quote }}
+            - {{ printf "/data/xnat/home/plugins/%s" ($c.target | default (printf "%s.jar" $plugin)) | quote }}
+          {{- include "xnat.s3Env" $ | nindent 10 }}
+          volumeMounts:
+            - name: home-plugins
+              mountPath: /data/xnat/home/plugins
+        {{- else if $c.source }}
+        # Source form: fetch a raw JAR (url|coordinates|file) into the shared
+        # home-plugins volume, on a stock curl image -- no custom installer image,
+        # same as the s3 form above. Coordinates and urls are both resolved while
+        # rendering, so the url actually fetched is visible here.
+        {{- $fetch := dict "plugin" $c "name" $plugin "repo" $.Values.pluginRepository "caCert" (and $.Values.pluginInstaller.caCertSecret (ne $c.source "file")) "installer" $.Values.pluginInstaller }}
+        - name: {{ $plugin }}
+          image: {{ $.Values.pluginInstaller.image | quote }}
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          securityContext:
+            {{- include "xnat.installerSecurityContext" $ | nindent 12 }}
+          command: ['sh', '-c']
+          args:
+            - |
+              {{- include "xnat.pluginFetch" $fetch | nindent 14 }}
+          {{- with include "xnat.pluginCredentialEnv" $fetch }}
+          {{- . | nindent 10 }}
+          {{- end }}
+          volumeMounts:
+            - name: home-plugins
+              mountPath: /data/xnat/home/plugins
+            {{- if and (eq $c.source "file") $c.secret }}
+            - name: plugin-{{ $plugin }}-jar
+              mountPath: /mnt/plugin-{{ $plugin }}
+              readOnly: true
+            {{- end }}
+            {{- if and $.Values.pluginInstaller.caCertSecret (ne $c.source "file") }}
+            - name: plugin-ca
+              mountPath: /mnt/plugin-ca
+              readOnly: true
+            {{- end }}
+        {{- else }}
+        # Image form: pre-built plugin OCI image; its entrypoint copies the JAR in.
+        - name: {{ $plugin }}
+          image: "{{ required (printf "plugins.%s: `repository` is required for the image form (or set `source`)" $plugin) $c.repository }}:{{ required (printf "plugins.%s: `tag` is required for the image form" $plugin) $c.tag }}"
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          volumeMounts:
+            - name: home-plugins
+              mountPath: /data/xnat/home/plugins
+        {{- end }}
+        {{- end }}
+        {{- if .Values.devPlugins.enabled }}
+        # DEV/TEST: copy every jar staged under the dev prefix into the plugins
+        # volume. Deliberately rendered after the plugins above so a locally built
+        # jar overrides a declared one of the same name -- that is the point of a
+        # side-load, and it is why this is not pluginInstaller.s3.syncPrefix, which
+        # installs a release set and must not silently outrank a pinned version.
+        - name: dev-plugins
+          image: {{ required "pluginInstaller.s3.image is required when devPlugins.enabled" .Values.pluginInstaller.s3.image }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- include "xnat.installerSecurityContext" . | nindent 12 }}
+          {{- include "xnat.s3Env" . | nindent 10 }}
+          command:
+            - aws
+            {{- with .Values.pluginInstaller.s3.endpointUrl }}
+            - --endpoint-url
+            - {{ . | quote }}
+            {{- end }}
+            - s3
+            - cp
+            - --recursive
+            - {{ required "devPlugins.s3Uri is required when devPlugins.enabled (e.g. s3://bucket/dev/plugins/)" .Values.devPlugins.s3Uri | quote }}
+            - /data/xnat/home/plugins/
           volumeMounts:
             - name: home-plugins
               mountPath: /data/xnat/home/plugins
@@ -157,6 +323,8 @@ spec:
         {{- end }}
         - name: wait-for-postgres
           image: busybox:1.36
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
           command:
             - 'sh'
             - '-c'
@@ -172,47 +340,272 @@ spec:
         {{- . | toYaml | nindent 8 }}
         {{- end }}
         {{- end }}
+        {{- if .Values.devWar.enabled }}
+        {{- $w := .Values.devWar }}
+        # DEV/TEST: fetch a WAR into the `webapps` volume, which the main
+        # container mounts over /usr/local/tomcat/webapps. Deliberately a separate
+        # volume: home-init seeds the `tomcat` volume from the image and runs
+        # after this, so a WAR written there would be overwritten.
+        - name: dev-war
+          {{- if eq $w.source "s3" }}
+          image: {{ required "pluginInstaller.s3.image is required when devWar.source is s3" .Values.pluginInstaller.s3.image }}
+          {{- else }}
+          image: {{ .Values.pluginInstaller.image | quote }}
+          {{- end }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- include "xnat.installerSecurityContext" . | nindent 12 }}
+          {{- if eq $w.source "s3" }}
+          {{- include "xnat.s3Env" . | nindent 10 }}
+          {{- end }}
+          command: ['sh', '-c']
+          args:
+            - |
+              set -eu
+              {{- if eq $w.source "s3" }}
+              aws{{ with .Values.pluginInstaller.s3.endpointUrl }} --endpoint-url {{ . | quote }}{{ end }} s3 cp {{ required "devWar.s3Uri is required when devWar.source is s3" $w.s3Uri | quote }} "/webapps/ROOT.war.part"
+              {{- else if eq $w.source "file" }}
+              cp {{ required "devWar.file is required when devWar.source is file" $w.file | quote }} "/webapps/ROOT.war.part"
+              {{- else }}
+              curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused{{ if .Values.pluginInstaller.caCertSecret }} --cacert /mnt/plugin-ca/ca.crt{{ end }} -o "/webapps/ROOT.war.part" {{ required "devWar.url is required when devWar.source is url" $w.url | quote }}
+              {{- end }}
+              {{- with $w.sha256 }}
+              echo {{ . | quote }}"  /webapps/ROOT.war.part" | sha256sum -c -
+              {{- end }}
+              mv "/webapps/ROOT.war.part" "/webapps/ROOT.war"
+          volumeMounts:
+            - name: webapps
+              mountPath: /webapps
+            {{- if and .Values.pluginInstaller.caCertSecret (eq $w.source "url") }}
+            - name: plugin-ca
+              mountPath: /mnt/plugin-ca
+              readOnly: true
+            {{- end }}
+        {{- end }}
         - name: home-init
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
           command:
             - 'bash'
             - '-c'
             - |
-              set -x
+              set -ex
               shopt -s extglob
+              {{- /* Only the ones that are directories on xnatdata: a volume with a
+                  size or an existingClaim is its own mount in the main container,
+                  and the directory under it is a mount point XNAT never writes.
+                  Same test as pvc.yaml and the volume ranges below. */}}
+              {{- $onData := list }}
+              {{- range $n := list "archive" "prearchive" "cache" }}
+              {{- if not (or (dig $n "size" "" (default dict $.Values.volumes)) (dig $n "existingClaim" "" (default dict $.Values.volumes))) }}
+              {{- $onData = append $onData $n }}
+              {{- end }}
+              {{- end }}
+              {{- if $onData }}
+              # {{ join ", " $onData }} are directories on the xnatdata mount rather
+              # than mounts of their own, so nothing else brings them into being --
+              # under 3.x the kubelet made each mount point.
+              #
+              # Creating them needs the xnatdata root writable by this uid, and
+              # fsGroup cannot be counted on for that: the kubelet never applies
+              # it to in-tree NFS or hostPath, nor to CSI drivers whose
+              # fsGroupPolicy is None or ReadWriteOnceWithFSType -- the latter
+              # skips RWX volumes, and is what EFS and FSx for OpenZFS ship. On
+              # that storage the root arrives root-owned. Failing here with the
+              # reason beats a bare mkdir error; under 3.x the same install came
+              # up and failed later, on the first write into the archive.
+              if [ -d /XNAT_DATA ]; then
+                if ! mkdir -p{{ range $onData }} /XNAT_DATA/{{ . }}{{ end }}; then
+                  { set +x; } 2>/dev/null  # say it once, not once traced and once printed
+                  echo "home-init: uid $(id -u) cannot create {{ join ", " $onData }} in the xnatdata root ($(stat -c '%u:%g %a' /XNAT_DATA))." >&2
+                  echo "fsGroup does not reach NFS, hostPath, or CSI drivers whose fsGroupPolicy skips this volume." >&2
+                  echo "Make the root writable by uid $(id -u), e.g. an initContainer running as root: chown $(id -u) {{ dig "xnatdata" "mountPath" "/data/xnat" (default dict .Values.volumes) }} (not -R). The chart README has one to copy." >&2
+                  exit 1
+                fi
+                # A root image runs home-init as root, so what it just created is
+                # root-owned; hand it to the uid XNAT runs as.
+                if [ "$(id -u)" = "0" ]; then
+                  chown {{ default "1000" .Values.securityContext.runAsUser }}{{ range $onData }} /XNAT_DATA/{{ . }}{{ end }}
+                fi
+                # mkdir -p is a no-op on a directory that already exists, and on a
+                # volume that came from 3.x these do: the runtime created them,
+                # root-owned 0755, as mount points for the old separate volumes.
+                # They survive the migration unwritable unless the copy fixed
+                # their ownership, and XNAT would only find out on its first write
+                # -- or, if the claims were annotated before the copy, would serve
+                # their empty contents as the archive.
+                for d in {{ join " " $onData }}; do
+                  if [ ! -w "/XNAT_DATA/$d" ]; then
+                    { set +x; } 2>/dev/null
+                    echo "home-init: uid $(id -u) cannot write $d in the xnatdata root ($(stat -c '%u:%g %a' "/XNAT_DATA/$d"))." >&2
+                    echo "On a release upgraded from 3.x this is the old mount point, left root-owned. If the data has been copied in, chown -R $(id -u) it from a root container; if not, copy it first (see the chart README)." >&2
+                    exit 1
+                  fi
+                done
+              fi
+              {{- end }}
               # Copy Tomcat folder
-              [ -d /TOMCAT ] && cp -r --preserve=mode,timestamps /usr/local/tomcat/* /TOMCAT
-              chown -R {{ default "1000" .Values.securityContext.runAsUser }} /TOMCAT
+              if [ -d /TOMCAT ]; then
+                cp -r --preserve=mode,timestamps /usr/local/tomcat/* /TOMCAT
+                {{- $proxyMode := include "xnat.tomcatProxyMode" . }}
+                {{- $keepAlive := include "xnat.tomcatKeepAliveAttr" . }}
+                {{- if or (eq $proxyMode "connector") $keepAlive }}
+                {{- $attrs := list $keepAlive }}
+                {{- if eq $proxyMode "connector" }}{{ $attrs = prepend $attrs (include "xnat.tomcatProxyAttrs" .) }}{{ end }}
+                # connector-mode proxy attrs (see "TLS-terminating proxies" in README.md) and/or keepAliveTimeout.
+                CONNECTOR_ATTRS={{ $attrs | compact | join " " | squote }}
+                # "start end" lines of the live Connector element. Comment-aware: stock
+                # server.xml also ships commented-out Connectors, one on 8080 as well.
+                mapfile -t CONNECTOR_LINES < <(awk '
+                  {{- include "xnat.awkStripXmlComments" . | nindent 18 }}
+                  L ~ /^[[:space:]]*<Connector[[:space:]]+port="8080"/ { s = NR; pending = 1 }
+                  pending && index(L, ">") { print s, NR; pending = 0 }
+                ' /TOMCAT/conf/server.xml)
+                if [ "${#CONNECTOR_LINES[@]}" -ne 1 ]; then
+                  {{- if eq $proxyMode "connector" }}
+                  echo "ERROR: expected exactly one live <Connector port=8080 ...> in /TOMCAT/conf/server.xml, found ${#CONNECTOR_LINES[@]}." >&2
+                  echo "       connector mode only recognises a Connector whose port is its first" >&2
+                  echo "       attribute, so this image's server.xml may simply be written another way." >&2
+                  echo "       tomcat.proxy.mode=forwardedHeaders needs no image change and does not" >&2
+                  echo "       read server.xml at all; otherwise set the attributes in the image and" >&2
+                  echo "       pass tomcat.proxy.mode=none." >&2
+                  exit 1
+                  {{- else }}
+                  # Warn, not fail: an unpatched Connector is the image's own behaviour.
+                  echo "WARNING: expected exactly one live <Connector port=8080 ...> in /TOMCAT/conf/server.xml, found ${#CONNECTOR_LINES[@]}; tomcat.keepAliveTimeout not applied." >&2
+                  {{- end }}
+                else
+                  read -r C_START C_END <<< "${CONNECTOR_LINES[0]}"
+                  {{- if $keepAlive }}
+                  # Replace, not duplicate, an image-set keepAliveTimeout (duplicates are unparseable).
+                  sed -i -E "${C_START},${C_END}s/(^|[[:space:]]+)keepAliveTimeout[[:space:]]*=[[:space:]]*(\"[^\"]*\"|'[^']*')//" /TOMCAT/conf/server.xml
+                  if sed -n "${C_START},${C_END}p" /TOMCAT/conf/server.xml | grep -q keepAliveTimeout; then
+                    echo "WARNING: the live Connector in /TOMCAT/conf/server.xml sets keepAliveTimeout in a form home-init cannot replace; tomcat.keepAliveTimeout not applied." >&2
+                    # Keep the image's value: drop ours, always the last attr.
+                    CONNECTOR_ATTRS=${CONNECTOR_ATTRS%{{ $keepAlive | squote }}}
+                    CONNECTOR_ATTRS=${CONNECTOR_ATTRS% }
+                  fi
+                  {{- end }}
+                  if [ -n "$CONNECTOR_ATTRS" ]; then
+                    sed -i "${C_START}s|<Connector|<Connector ${CONNECTOR_ATTRS}|" /TOMCAT/conf/server.xml
+                  fi
+                fi
+                {{- end }}
+              fi
+              {{- if eq $proxyMode "forwardedHeaders" }}
+              # Teach Tomcat the public scheme/host/port behind a TLS-terminating
+              # proxy; see "TLS-terminating proxies" in README.md.
+              #
+              # Written as a per-host context default rather than patched into
+              # server.xml. Tomcat merges this file into every context on the
+              # host, it does not exist in stock Tomcat, and conf/Catalina is
+              # already a volume this chart owns -- so nothing parses or rewrites
+              # a file the image ships, and the result does not depend on that
+              # file's shape in any given image.
+              VALVE={{ include "xnat.tomcatProxyValve" . | squote }}
+              mkdir -p /CONF_CATALINA/localhost
+              printf '<Context>\n  %s\n</Context>\n' "$VALVE" > /CONF_CATALINA/localhost/context.xml.default
+              # Tomcat looks for this file under conf/<Engine>/<Host>/, so it is
+              # picked up while those are the stock Catalina/localhost. Matched
+              # against comment-stripped text: stock server.xml ships a commented
+              # <Engine ... jvmRoute="jvm1">, which would satisfy a plain grep and
+              # silence this check in exactly the case it exists to catch. A
+              # warning rather than a failure: an image that names them
+              # differently just ignores the file, which is the behaviour before
+              # this chart wrote it, not a broken pod.
+              if ! awk '
+                {{- include "xnat.awkStripXmlComments" . | nindent 16 }}
+                L ~ /<Engine[[:space:]][^>]*name="Catalina"/ { engine = 1 }
+                L ~ /<Host[[:space:]][^>]*name="localhost"/  { host = 1 }
+                END { exit (engine && host) ? 0 : 1 }
+              ' /TOMCAT/conf/server.xml; then
+                echo "WARNING: server.xml does not look like the stock Catalina/localhost Engine/Host." >&2
+                echo "         conf/Catalina/localhost/context.xml.default may be ignored, leaving XNAT" >&2
+                echo "         building http://<backend>:8080/ URLs. Configure the valve in the image" >&2
+                echo "         and pass tomcat.proxy.mode=none." >&2
+              fi
+              {{- end }}
+              # chown only when running as root. With a root-USER image, home-init
+              # runs as root and must re-own the copied tree to the runtime uid.
+              # With a non-root image it already runs as that uid (files are
+              # created correctly owned), and the pod fsGroup covers the
+              # volume-root dirs -- so the chown is unnecessary and would EPERM.
+              # Guarding on uid lets home-init work for both root and non-root images.
+              if [ "$(id -u)" = "0" ]; then
+                chown -R {{ default "1000" .Values.securityContext.runAsUser }} /TOMCAT
+                {{- if eq $proxyMode "forwardedHeaders" }}
+                chown -R {{ default "1000" .Values.securityContext.runAsUser }} /CONF_CATALINA
+                {{- end }}
+              fi
+              # Copy XNAT_HOME directory excluding the plugins folder
+              cp -r --preserve=mode,timestamps ${XNAT_HOME}/!(plugins) /XNAT_HOME
+              mkdir -p /XNAT_HOME/config
               # Setup xnat-conf.properties
               readarray -d - -t REP <<< "${POD_NAME}"
-              cp /tmp/xnat-conf.properties ${XNAT_HOME}/config/xnat-conf.properties
+              cp /tmp/xnat-conf.properties /XNAT_HOME/config/xnat-conf.properties
               # Guarantee a trailing newline before appending: without it the
               # echo below glues xnat.is_primary_node onto the last property of
               # the source file (e.g. "...=truexnat.is_primary_node=true"),
               # which Spring then fails to parse and the webapp never deploys.
-              [ "$(tail -c 1 ${XNAT_HOME}/config/xnat-conf.properties)" = "" ] || echo "" >> ${XNAT_HOME}/config/xnat-conf.properties
-              if [[ "${REP[-1]}" -eq "0" ]]; then
-                echo "xnat.is_primary_node=true" >> ${XNAT_HOME}/config/xnat-conf.properties
-              else
-                echo "xnat.is_primary_node=false" >> ${XNAT_HOME}/config/xnat-conf.properties
+              [ "$(tail -c 1 /XNAT_HOME/config/xnat-conf.properties)" = "" ] || echo "" >> /XNAT_HOME/config/xnat-conf.properties
+              {{- if .Values.cnpg.cluster.credentials.externalSecret }}
+              # Datasource password is sourced at runtime from the external
+              # secret (via XNAT_DB_PASSWORD) so it stays out of the rendered
+              # config Secret. Everything that touches the password runs inside
+              # the { set +x; } window so the script's top-level `set -ex` does
+              # not echo it to the pod log; do not reference XNAT_DB_PASSWORD
+              # after `set -x` resumes. printf %s handles any special chars.
+              { set +x; } 2>/dev/null
+              if [ -z "${XNAT_DB_PASSWORD}" ]; then
+                echo "ERROR: externalSecret {{ .Values.cnpg.cluster.credentials.externalSecret }} key {{ .Values.cnpg.cluster.credentials.externalSecretPasswordKey | default "password" }} is empty or missing" >&2
+                exit 1
               fi
-              echo "node.id=$(hostname)" > ${XNAT_HOME}/config/node-conf.properties
-              # Copy XNAT_HOME directory excluding the plugins folder
-              cp -r --preserve=mode,timestamps ${XNAT_HOME}/!(plugins) /XNAT_HOME
-              chown -R {{ default "1000" .Values.securityContext.runAsUser }} /XNAT_HOME
-              chown -R {{ default "1000" .Values.securityContext.runAsUser }} /HOME-PLUGINS
+              printf 'datasource.password=%s\n' "${XNAT_DB_PASSWORD}" >> /XNAT_HOME/config/xnat-conf.properties
+              set -x
+              {{- end }}
+              if [[ "${REP[-1]}" -eq "0" ]]; then
+                echo "xnat.is_primary_node=true" >> /XNAT_HOME/config/xnat-conf.properties
+              else
+                echo "xnat.is_primary_node=false" >> /XNAT_HOME/config/xnat-conf.properties
+              fi
+              echo "node.id=$(hostname)" > /XNAT_HOME/config/node-conf.properties
+              # See the /TOMCAT chown above: root-only, so non-root images skip it.
+              if [ "$(id -u)" = "0" ]; then
+                chown -R {{ default "1000" .Values.securityContext.runAsUser }} /XNAT_HOME
+                chown -R {{ default "1000" .Values.securityContext.runAsUser }} /HOME-PLUGINS
+              fi
           env:
           - name: POD_NAME
             valueFrom:
               fieldRef:
                 apiVersion: v1
-                fieldPath: metadata.name           
+                fieldPath: metadata.name
+          {{- if .Values.cnpg.cluster.credentials.externalSecret }}
+          - name: XNAT_DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Values.cnpg.cluster.credentials.externalSecret }}
+                key: {{ .Values.cnpg.cluster.credentials.externalSecretPasswordKey | default "password" }}
+          {{- end }}
           volumeMounts:
             - name: tomcat
               mountPath: /TOMCAT
+            {{- if eq $proxyMode "forwardedHeaders" }}
+            # The main container mounts this same volume over
+            # /usr/local/tomcat/conf/Catalina, so the context default has to be
+            # written here rather than into the copied tomcat tree, which that
+            # mount would hide.
+            - name: conf-catalina
+              mountPath: /CONF_CATALINA
+            {{- end }}
             - name: xnat-home
               mountPath: /XNAT_HOME
+            {{- if or (dig "xnatdata" "size" "" (default dict .Values.volumes)) (dig "xnatdata" "existingClaim" "" (default dict .Values.volumes)) }}
+            - name: xnatdata
+              mountPath: /XNAT_DATA
+            {{- end }}
             - name: home-plugins
               mountPath: /HOME-PLUGINS
             - name: xnat-config
@@ -236,6 +629,29 @@ spec:
           emptyDir: {}
         - name: home-plugins
           emptyDir: {}
+        {{- if .Values.devWar.enabled }}
+        - name: webapps
+          emptyDir: {}
+        {{- end }}
+        {{- with .Values.pluginInstaller.caCertSecret }}
+        - name: plugin-ca
+          secret:
+            secretName: {{ . }}
+        {{- end }}
+        {{- range $plugin, $c := .Values.plugins }}
+        {{- if and (eq ($c.source | default "") "file") $c.secret }}
+        - name: plugin-{{ $plugin }}-jar
+          secret:
+            secretName: {{ required (printf "plugins.%s.secret needs a name" $plugin) $c.secret.name }}
+        {{- end }}
+        {{- end }}
+        {{- if .Values.metrics.jmx.enabled }}
+        - name: jmx-agent
+          emptyDir: {}
+        - name: jmx-config
+          configMap:
+            name: {{ include "xnat.fullname" . }}-jmx
+        {{- end }}
         {{- with .Values.extraVolumes }}
         {{- . | toYaml | nindent 8 }}
         {{- end }}
@@ -254,7 +670,7 @@ spec:
             secretName: {{ include "xnat.fullname" . }}
         {{- $context := . -}}
         {{- range $name, $c := .Values.volumes }}
-        {{- if $c.size }}
+        {{- if or $c.size $c.existingClaim }}
         - name: {{ $name }}
           persistentVolumeClaim:
             claimName: {{ $c.existingClaim | default (printf "%s-%s" (include "xnat.fullname" $context) $name) }}

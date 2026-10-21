@@ -30,3 +30,22 @@
   {{- end }}
 {{- end }}
 {{- end }}
+
+{{- $split := list }}
+{{- range $n := list "archive" "prearchive" "cache" }}
+{{- if or (dig $n "size" "" (default dict $.Values.volumes)) (dig $n "existingClaim" "" (default dict $.Values.volumes)) }}{{ $split = append $split $n }}{{ end }}
+{{- end }}
+{{- if $split }}
+
+WARNING: {{ join ", " $split }} {{ if eq (len $split) 1 }}has a volume of its own{{ else }}have volumes of their own{{ end }}.
+{{- if or (has "archive" $split) (has "prearchive" $split) }}
+
+  archive and prearchive are now on different mounts, and rename(2) fails with
+  EXDEV across mounts -- so moving a session out of the prearchive copies every
+  file instead of renaming it.
+{{- end }}
+
+  Clear BOTH size and existingClaim on {{ join ", " $split }} to make
+  {{ if eq (len $split) 1 }}it a directory{{ else }}them directories{{ end }} on the {{ dig "xnatdata" "mountPath" "/data/xnat" (default dict .Values.volumes) }} mount.
+  Either one alone still mounts a separate volume.
+{{- end }}

@@ -1,0 +1,10 @@
+# A hostVolume PV; the numeric-looking namespace checks that claimRef.namespace stays a string.
+cnpg:
+  cluster:
+    credentials:
+      password: ci
+namespace: "0123"
+volumes:
+  build:
+    hostVolume: true
+    rootPath: /data/xnat/build

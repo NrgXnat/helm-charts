@@ -1,0 +1,10 @@
+# Same minimal credential guard as default-values.yaml, with both server.xml
+# patches off, so home-init renders no Connector edit at all.
+cnpg:
+  cluster:
+    credentials:
+      password: "ci-only-placeholder"
+tomcat:
+  keepAliveTimeout: null
+  proxy:
+    mode: none

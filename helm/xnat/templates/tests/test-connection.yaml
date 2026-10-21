@@ -4,12 +4,14 @@ kind: Pod
 metadata:
   name: {{ include "xnat.fullname" . }}-test-connection
   labels:
-    {{- include "xnat.labels" . | nindent 4 }}
+    {{- /* Keep this client Pod out of the XNAT Services' selectors. */}}
+    {{- omit (include "xnat.labels" . | fromYaml) "app.kubernetes.io/name" | toYaml | nindent 4 }}
   annotations:
     "helm.sh/hook": test
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   restartPolicy: Never
+  automountServiceAccountToken: false
   {{- with .Values.imagePullSecrets }}
   imagePullSecrets:
     {{- toYaml . | nindent 4 }}
@@ -18,20 +20,24 @@ spec:
     {{- toYaml .Values.podSecurityContext | nindent 4 }}
   containers:
     - name: test
-      image: {{ .Values.tests.image }}
+      image: {{ .Values.tests.image | quote }}
       securityContext:
         {{- toYaml .Values.securityContext | nindent 8 }}
+      env:
+        - name: XNAT_TEST_URL
+          value: {{ printf "http://%s:%v%s" (include "xnat.fullname" .) .Values.service.port .Values.tests.path | quote }}
       command: ["sh", "-c"]
       args:
         - |
-          url="http://{{ include "xnat.fullname" . }}:{{ .Values.service.port }}{{ .Values.tests.path }}"
-          echo "Probing ${url}"
+          echo "Probing ${XNAT_TEST_URL}"
           for i in $(seq 1 {{ .Values.tests.retries }}); do
-            if wget -q -O- "${url}" >/dev/null 2>&1; then
+            if timeout {{ .Values.tests.timeoutSeconds }} wget -q -O /dev/null "${XNAT_TEST_URL}" >/dev/null 2>&1; then
               echo "XNAT is reachable"; exit 0
             fi
-            echo "attempt ${i}/{{ .Values.tests.retries }}: not ready, waiting {{ .Values.tests.retryDelaySeconds }}s"
-            sleep {{ .Values.tests.retryDelaySeconds }}
+            echo "attempt ${i}/{{ .Values.tests.retries }}: not ready"
+            if [ "${i}" -lt {{ .Values.tests.retries }} ]; then
+              sleep {{ .Values.tests.retryDelaySeconds }}
+            fi
           done
-          echo "XNAT did not become reachable at ${url}"; exit 1
+          echo "XNAT did not become reachable at ${XNAT_TEST_URL}"; exit 1
 {{- end }}

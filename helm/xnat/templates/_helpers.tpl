@@ -93,3 +93,540 @@ before it can GC.
 {{- with .Values.jvm.maxMetaspace }}-XX:MaxMetaspaceSize={{ . }} {{ end -}}
 {{- with .Values.jvm.extraOpts }}{{ . }}{{ end -}}
 {{- end -}}
+
+{{/*
+Full JAVA_TOOL_OPTIONS string: the heap/metaspace opts from jvm.* (when
+jvm.enabled) plus the Prometheus JMX java agent (when metrics.jmx.enabled).
+Either or both may contribute; the result is space-joined and may be empty.
+*/}}
+{{- define "xnat.javaToolOptions" -}}
+{{- $opts := list -}}
+{{- if .Values.jvm.enabled -}}
+{{- with (include "xnat.jvmOpts" . | trim) }}{{- $opts = append $opts . -}}{{- end -}}
+{{- end -}}
+{{- if .Values.metrics.jmx.enabled -}}
+{{- $opts = append $opts (printf "-javaagent:/jmx/agent.jar=%d:/etc/jmx/config.yaml" (int .Values.metrics.jmx.port)) -}}
+{{- end -}}
+{{- $opts | join " " -}}
+{{- end -}}
+{{/*
+Public hostname off the Ingress this chart renders, or "": ingress.tls first,
+then the ingress rules. Wildcards are skipped wherever they appear -- both a
+wildcard certificate in ingress.tls and a wildcard rule host are legal, but
+"*.example.org" is not a name Tomcat can report, and taking one would fail the
+render even where a concrete host sits beside it.
+*/}}
+{{- define "xnat.ingressPublicHost" -}}
+{{- $host := "" -}}
+{{- if .Values.ingress.enabled -}}
+{{- range .Values.ingress.tls -}}
+{{- range .hosts -}}
+{{- if and (not $host) (not (contains "*" (. | toString))) -}}
+{{- $host = . | toString -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range .Values.ingress.hosts -}}
+{{- if and (not $host) .host (not (contains "*" (.host | toString))) -}}
+{{- $host = .host | toString -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $host -}}
+{{- end -}}
+
+{{/*
+An awk rule that strips XML comments, leaving the live text of the current line
+in L. Scans each line token by token, so it stays correct when <!-- and --> share
+a line in either order -- a naive line-at-a-time flag desyncs on "--> x <!--" and
+can then treat commented text as live. Both proxy modes match against L.
+*/}}
+{{- define "xnat.awkStripXmlComments" -}}
+{ L = ""; rest = $0
+  while (length(rest)) {
+    if (incomment) {
+      i = index(rest, "-->")
+      if (!i) { rest = "" } else { rest = substr(rest, i + 3); incomment = 0 }
+    } else {
+      i = index(rest, "<!--")
+      if (!i) { L = L rest; rest = "" } else { L = L substr(rest, 1, i - 1); rest = substr(rest, i + 4); incomment = 1 }
+    }
+  }
+}
+{{- end -}}
+
+{{/*
+How home-init should teach Tomcat the public scheme/host/port, validated:
+forwardedHeaders (default), connector, or none. See "TLS-terminating proxies"
+in README.md for what each one does to a request that did NOT come through the
+proxy.
+*/}}
+{{- define "xnat.tomcatProxyMode" -}}
+{{- $mode := .Values.tomcat.proxy.mode | default "forwardedHeaders" | toString -}}
+{{- if not (has $mode (list "forwardedHeaders" "connector" "none")) -}}
+{{- fail (printf "tomcat.proxy.mode: %q is not forwardedHeaders, connector or none" $mode) -}}
+{{- end -}}
+{{- $mode -}}
+{{- end -}}
+
+{{/*
+The RemoteIpValve, as one XML element, for home-init to write into a per-host
+context default. It rewrites scheme, isSecure() and the server port for requests
+that arrive from a trusted proxy carrying the protocol header, and leaves every
+other request alone -- which is what keeps in-cluster callers of the Service
+(container service, JupyterHub, smoke jobs, probes) working exactly as they did.
+The hostname needs no configuring: the browser's Host header already carries it
+through the proxy.
+
+internalProxies is omitted unless set, so Tomcat's own default applies; that
+default already covers RFC1918, CGNAT 100.64/10, loopback, IPv6 link-local and
+IPv6 ULA.
+*/}}
+{{- define "xnat.tomcatProxyValve" -}}
+{{- $p := .Values.tomcat.proxy -}}
+{{- $header := $p.protocolHeader | default "X-Forwarded-Proto" | toString -}}
+{{- if not (regexMatch "^[A-Za-z0-9-]+$" $header) -}}
+{{- fail (printf "tomcat.proxy.protocolHeader: %q is not an HTTP header name" $header) -}}
+{{- end -}}
+{{- $internal := $p.internalProxies | default "" | toString -}}
+{{- if regexMatch "[\"'<>&\n]" $internal -}}
+{{- fail "tomcat.proxy.internalProxies: a quote, angle bracket, ampersand or newline cannot be carried into the XML attribute (it is a Java regex, so backslashes are fine)" -}}
+{{- end -}}
+<Valve className="org.apache.catalina.valves.RemoteIpValve" protocolHeader="{{ $header }}" portHeader="X-Forwarded-Port"{{ with $internal }} internalProxies="{{ . }}"{{ end }} />
+{{- end -}}
+
+{{/*
+keepAliveTimeout="<ms>" for the live Connector, or "" when tomcat.keepAliveTimeout
+is null. `int` keeps the shell-interpolated value numeric; the schema bounds it.
+*/}}
+{{- define "xnat.tomcatKeepAliveAttr" -}}
+{{- if not (kindIs "invalid" .Values.tomcat.keepAliveTimeout) -}}
+keepAliveTimeout="{{ int .Values.tomcat.keepAliveTimeout }}"
+{{- end -}}
+{{- end -}}
+
+{{/*
+The public hostname for connector mode: tomcat.proxy.host, else one borrowed
+from the Ingress this chart renders. Empty when it renders none and none was
+given -- the bring-your-own-ingress case, where only tomcat.proxy.host can
+supply it. forwardedHeaders mode needs none of this.
+*/}}
+{{- define "xnat.tomcatProxyHost" -}}
+{{- $host := .Values.tomcat.proxy.host | default "" | toString -}}
+{{- if not $host -}}{{- $host = include "xnat.ingressPublicHost" . -}}{{- end -}}
+{{- $host -}}
+{{- end -}}
+
+{{/*
+The Connector attributes for connector mode, as one XML attribute string.
+scheme/secure make request.getScheme()/isSecure() report the public protocol;
+proxyName/proxyPort make getServerName()/getServerPort() report the public host
+and port. Unconditional -- see the README.md caveat about in-cluster callers.
+
+Every value is validated here: it is interpolated into a shell string in
+home-init, so a value carrying a quote or a space has to fail the render rather
+than reach the pod.
+*/}}
+{{- define "xnat.tomcatProxyAttrs" -}}
+{{- $host := include "xnat.tomcatProxyHost" . -}}
+{{- if not $host -}}
+{{- fail "tomcat.proxy.mode is connector but no public hostname is known: set tomcat.proxy.host. The chart can only infer one from an Ingress it renders itself (ingress.tls, else ingress.hosts), so a bring-your-own-ingress deployment has to name it." -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$" $host) -}}
+{{- fail (printf "tomcat.proxy.host: %q is not a hostname (it is also interpolated into a shell string, so it may contain only letters, digits, dots and hyphens)" $host) -}}
+{{- end -}}
+{{/* The enum is also in values.schema.json; kept here because the value is
+     interpolated into a shell word, so it must be safe even under
+     --skip-schema-validation. The port needs no such check: `int` already
+     makes it a number, and the schema bounds it. */}}
+{{- $scheme := .Values.tomcat.proxy.scheme | default "https" | toString -}}
+{{- if not (has $scheme (list "http" "https")) -}}
+{{- fail (printf "tomcat.proxy.scheme: %q is not http or https" $scheme) -}}
+{{- end -}}
+{{/* Default the port to match the scheme, so `scheme: http` alone does not
+     report the https port. */}}
+{{- $port := int (.Values.tomcat.proxy.port | default (ternary 443 80 (eq $scheme "https"))) -}}
+scheme="{{ $scheme }}" secure="{{ eq $scheme "https" }}" proxyName="{{ $host }}" proxyPort="{{ $port }}"
+{{- end -}}
+
+{{/*
+Validated parts of a Maven coordinate, groupId:artifactId:version[:packaging[:classifier]],
+emitted space-separated as "group artifact version packaging classifier". packaging
+defaults to jar; an absent classifier is emitted as "-" so callers always get five
+fields. Takes a dict of `coordinates` and `name`.
+*/}}
+{{- define "xnat.mavenCoordParts" -}}
+{{- $name := .name -}}
+{{- $coord := required (printf "plugins.%s: `coordinates` is required for `source: coordinates`" $name) .coordinates -}}
+{{- $f := splitList ":" $coord -}}
+{{- if or (lt (len $f) 3) (not (index $f 0)) (not (index $f 1)) (not (index $f 2)) -}}
+{{- fail (printf "plugins.%s: coordinates %q -- want groupId:artifactId:version[:packaging[:classifier]]" $name $coord) -}}
+{{- end -}}
+{{- if hasSuffix "-SNAPSHOT" (index $f 2) -}}
+{{- fail (printf "plugins.%s: coordinates %q -- a snapshot cannot be resolved from a coordinate. Its filename carries the deploy timestamp and build number, which only maven-metadata.xml knows, and the chart resolves coordinates while rendering (no network). Use `source: url` with the timestamped url, or stage the jar and use `source: s3` / `source: file` / `devPlugins`." $name $coord) -}}
+{{- end -}}
+{{- $pkg := "jar" -}}
+{{- if and (ge (len $f) 4) (index $f 3) -}}{{- $pkg = index $f 3 -}}{{- end -}}
+{{- $cls := "-" -}}
+{{- if and (ge (len $f) 5) (index $f 4) -}}{{- $cls = index $f 4 -}}{{- end -}}
+{{- printf "%s %s %s %s %s" (index $f 0) (index $f 1) (index $f 2) $pkg $cls -}}
+{{- end -}}
+
+{{/*
+Repository-relative path for a *release* Maven coordinate, e.g.
+  au.edu.qcif.xnat.openid:openid-auth-plugin:1.5.0:jar:xpl
+  -> au/edu/qcif/xnat/openid/openid-auth-plugin/1.5.0/openid-auth-plugin-1.5.0-xpl.jar
+
+A -SNAPSHOT is rejected by xnat.mavenCoordParts: its filename is timestamped and
+only maven-metadata.xml knows it. Takes a dict of `coordinates` and `name`.
+*/}}
+{{- define "xnat.mavenArtifactPath" -}}
+{{- $p := splitList " " (include "xnat.mavenCoordParts" .) -}}
+{{- $g := index $p 0 -}}{{- $a := index $p 1 -}}{{- $v := index $p 2 -}}
+{{- $pkg := index $p 3 -}}{{- $cls := index $p 4 -}}
+{{- $sfx := "" -}}{{- if ne $cls "-" -}}{{- $sfx = printf "-%s" $cls -}}{{- end -}}
+{{- printf "%s/%s/%s/%s-%s%s.%s" (replace "." "/" $g) $a $v $a $v $sfx $pkg -}}
+{{- end -}}
+
+{{/*
+Where a source-form plugin's jar is fetched from, for the cases resolvable at
+render time (`source: url`, and a release `source: coordinates`).
+
+`source: url` -- the declared url, rewritten onto pluginRepository.baseUrl when it
+begins with pluginRepository.matchPrefix, with the rest of the path preserved (the
+layout a Nexus `raw` proxy of the upstream host serves). A url that does not match
+the prefix is used as written, so a plugin published elsewhere is never silently
+redirected into the mirror.
+
+`source: coordinates` -- the repository base plus the coordinate's
+repository-relative path. Pointing the base at a proxy or group redirects every
+coordinate plugin at once, which is what an air-gapped deploy changes.
+
+Resolving here means the exact url is visible in the rendered manifest. A snapshot
+coordinate is the exception -- see xnat.pluginFetch.
+
+Takes a dict of `plugin` (the entry), `name` and `repo` (the pluginRepository map).
+*/}}
+{{- define "xnat.pluginArtifactUrl" -}}
+{{- $c := .plugin -}}
+{{- $name := .name -}}
+{{- $repo := .repo | default dict -}}
+{{- if eq $c.source "coordinates" -}}
+{{- printf "%s/%s" (trimSuffix "/" (include "xnat.pluginMavenBase" .)) (include "xnat.mavenArtifactPath" (dict "coordinates" $c.coordinates "name" $name)) -}}
+{{- else -}}
+{{- $url := required (printf "plugins.%s: `url` is required for `source: url`" $name) $c.url -}}
+{{- $b := $repo.baseUrl | default "" -}}
+{{- $p := $repo.matchPrefix | default "" -}}
+{{- if and $b $p (hasPrefix $p $url) -}}
+{{- printf "%s%s" (trimSuffix "/" $b) (trimPrefix (trimSuffix "/" $p) $url) -}}
+{{- else -}}
+{{- $url -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Repository a coordinates plugin resolves against: its own mavenUrl when set,
+otherwise pluginRepository.mavenUrl. Same dict as xnat.pluginArtifactUrl.
+*/}}
+{{- define "xnat.pluginMavenBase" -}}
+{{- $name := .name -}}
+{{- required (printf "plugins.%s: needs a repository -- set pluginRepository.mavenUrl, or plugins.%s.mavenUrl when this plugin lives somewhere else" $name $name) (.plugin.mavenUrl | default (.repo | default dict).mavenUrl) -}}
+{{- end -}}
+
+{{/*
+Credentials/region environment for an AWS-CLI init container.
+
+With s3.existingSecret unset the CLI authenticates with the pod's IRSA role, as
+it always has. When set, its keys are passed through as environment variables --
+either wholesale via envFrom, or remapped onto the AWS names when s3.secretKeys
+names a differently-keyed Secret (e.g. MinIO's S3_USER / S3_PASS).
+*/}}
+{{- define "xnat.s3Env" -}}
+{{- $s3 := .Values.pluginInstaller.s3 -}}
+env:
+  - name: HOME
+    value: /tmp
+  {{- with $s3.region }}
+  - name: AWS_REGION
+    value: {{ . | quote }}
+  {{- end }}
+  {{- if and $s3.existingSecret $s3.secretKeys.accessKeyId }}
+  - name: AWS_ACCESS_KEY_ID
+    valueFrom:
+      secretKeyRef:
+        name: {{ $s3.existingSecret }}
+        key: {{ $s3.secretKeys.accessKeyId }}
+  - name: AWS_SECRET_ACCESS_KEY
+    valueFrom:
+      secretKeyRef:
+        name: {{ $s3.existingSecret }}
+        key: {{ required "pluginInstaller.s3.secretKeys.secretAccessKey is required alongside accessKeyId" $s3.secretKeys.secretAccessKey }}
+  {{- end }}
+{{- if and $s3.existingSecret (not $s3.secretKeys.accessKeyId) }}
+envFrom:
+  - secretRef:
+      name: {{ $s3.existingSecret }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Index into pluginInstaller.credentials of the entry that authenticates this
+plugin's fetch, or "" when none does; first match in list order wins.
+
+Matched against the *resolved* url, after any pluginRepository.baseUrl rewrite, so
+a mirror is never handed the origin's token. `source: file` opens no connection and
+never matches. A plain prefix test, only as safe as the prefix -- hence the https
+and past-the-host `/` rules in xnat.assertCredentials.
+
+Takes the same dict as xnat.pluginArtifactUrl, plus `installer`
+(.Values.pluginInstaller) and optionally `url` (already resolved, to save the work).
+*/}}
+{{- define "xnat.pluginCredentialIndex" -}}
+{{- $creds := (.installer | default dict).credentials | default list -}}
+{{- if and $creds (ne .plugin.source "file") -}}
+{{- $url := .url | default (include "xnat.pluginArtifactUrl" .) -}}
+{{- $found := "" -}}
+{{- range $i, $cred := $creds -}}
+{{- range $p := ($cred.matchPrefixes | default list) -}}
+{{- if and (eq $found "") (hasPrefix $p $url) -}}
+{{- $found = printf "%d" $i -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $found -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The matched credential's headers as curl flags.
+
+A `valueFrom` header renders as an expansion of the PLUGIN_CRED_<n> variable
+xnat.pluginCredentialEnv binds to the Secret key, so only the variable's name
+reaches the manifest. It sits inside double quotes, which the shell does not
+re-parse, so quotes and spaces in the value survive.
+
+Same dict as xnat.pluginCredentialIndex.
+*/}}
+{{- define "xnat.pluginCredentialFlags" -}}
+{{- $i := include "xnat.pluginCredentialIndex" . -}}
+{{- if ne $i "" -}}
+{{- $cred := index ((.installer).credentials) (atoi $i) -}}
+{{- range $n, $h := ($cred.headers | default list) -}}
+{{- if $h.valueFrom -}}
+{{- printf " -H \"%s: %s${PLUGIN_CRED_%d}\"" $h.name ($h.valuePrefix | default "") $n -}}
+{{- else -}}
+{{- printf " -H '%s: %s'" $h.name $h.value -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Redirect flags for a plugin fetch: `-L`, or `-L --max-redirs 0` when following a
+redirect would hand the credential to another host.
+
+Since 7.58 curl drops Authorization (and Cookie) on a cross-host redirect, but no
+other header name -- so a Secret sent as PRIVATE-TOKEN or X-JFrog-Art-Api would
+ride the redirect. Those fetches refuse it instead: `--max-redirs 0` fails with
+exit 47 before the second request, where dropping -L would write the redirect's
+body into the jar. `followRedirects` overrides either way; only `valueFrom` counts
+as a credential. See examples/xnat/pluginCredentials.yml.
+
+Same dict as xnat.pluginCredentialIndex.
+*/}}
+{{- define "xnat.pluginCurlRedirect" -}}
+{{- $follow := true -}}
+{{- $i := include "xnat.pluginCredentialIndex" . -}}
+{{- if ne $i "" -}}
+{{- $cred := index ((.installer).credentials) (atoi $i) -}}
+{{- if hasKey $cred "followRedirects" -}}
+{{- $follow = $cred.followRedirects -}}
+{{- else -}}
+{{- range $h := ($cred.headers | default list) -}}
+{{- if and $h.valueFrom (not (has (lower ($h.name | default "")) (list "authorization" "cookie"))) -}}
+{{- $follow = false -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $follow }}-L{{ else }}-L --max-redirs 0{{ end -}}
+{{- end -}}
+
+{{/*
+PLUGIN_CRED_<n> variables binding the matched credential's `valueFrom` headers to
+their Secret keys. Nothing is rendered for a fetch that matched no entry, or whose
+entry is all literal headers.
+
+The secretKeyRefs are deliberately not `optional`: a missing Secret or key holds
+the pod at CreateContainerConfigError naming what it could not find, rather than
+starting an init container that takes a 401 -- or quietly succeeds unauthenticated.
+
+Same dict as xnat.pluginCredentialIndex.
+*/}}
+{{- define "xnat.pluginCredentialEnv" -}}
+{{- $i := include "xnat.pluginCredentialIndex" . -}}
+{{- if ne $i "" -}}
+{{- $cred := index ((.installer).credentials) (atoi $i) -}}
+{{- $bound := list -}}
+{{- range $n, $h := ($cred.headers | default list) -}}
+{{- if $h.valueFrom -}}{{- $bound = append $bound (dict "n" $n "ref" $h.valueFrom.secretKeyRef) -}}{{- end -}}
+{{- end -}}
+{{- if $bound -}}
+env:
+{{- range $b := $bound }}
+  - name: PLUGIN_CRED_{{ $b.n }}
+    valueFrom:
+      secretKeyRef:
+        name: {{ $b.ref.name | quote }}
+        key: {{ $b.ref.key | quote }}
+{{- end }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Rejects a malformed pluginInstaller.credentials entry.
+
+Runs over every entry, not just those a plugin matches today, so a mistake fails
+`helm lint` when it is written rather than when a later plugin first matches it.
+
+Takes the root context.
+*/}}
+{{- define "xnat.assertCredentials" -}}
+{{- range $i, $cred := ((.Values.pluginInstaller | default dict).credentials | default list) -}}
+{{- $at := printf "pluginInstaller.credentials[%d]" $i -}}
+{{- if not ($cred.matchPrefixes | default list) -}}
+{{- fail (printf "%s needs `matchPrefixes` -- the url prefixes whose fetches carry its headers" $at) -}}
+{{- end -}}
+{{- if not (kindIs "slice" $cred.matchPrefixes) -}}
+{{- fail (printf "%s: `matchPrefixes` must be a list of prefixes (a `-` item each), not a %s" $at (kindOf $cred.matchPrefixes)) -}}
+{{- end -}}
+{{- range $p := $cred.matchPrefixes -}}
+{{- if regexMatch "^https://[^/]*@" $p -}}
+{{- fail (printf "%s: matchPrefix %q puts userinfo before its host -- the host is whatever follows the `@`, so the prefix matches somewhere other than it reads as. Credentials belong in `headers`." $at $p) -}}
+{{- end -}}
+{{- if not (regexMatch "^https://[^/@]+/" $p) -}}
+{{- fail (printf "%s: matchPrefix %q must be https and must run past its host's slash, e.g. https://api.github.com/ -- http would send the credential in cleartext, and stopping short of the slash also matches https://api.github.com.example.net/." $at $p) -}}
+{{- end -}}
+{{- end -}}
+{{- if not ($cred.headers | default list) -}}
+{{- fail (printf "%s needs `headers` -- what to send to the urls its matchPrefixes match" $at) -}}
+{{- end -}}
+{{- if not (kindIs "slice" $cred.headers) -}}
+{{- fail (printf "%s: `headers` must be a list of headers (a `-` item each), not a %s" $at (kindOf $cred.headers)) -}}
+{{- end -}}
+{{- if and (hasKey $cred "followRedirects") (not (kindIs "bool" $cred.followRedirects)) -}}
+{{- fail (printf "%s: `followRedirects` must be true or false" $at) -}}
+{{- end -}}
+{{- range $n, $h := $cred.headers -}}
+{{- include "xnat.assertCredentialHeader" (dict "header" $h "at" (printf "%s.headers[%d]" $at $n)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Rejects a credentials header the init container's shell could not carry verbatim.
+
+The name and any literal value render straight into the fetch script, so a quote or
+newline would end the -H argument early and hand the rest to the shell as code, and
+a non-string literal would reach `%s` as `%!s(float64=2)`. Refused here rather than
+failing obscurely in the container. `valueFrom` values are exempt -- they arrive by
+a variable expansion the shell does not re-parse.
+
+Takes a dict of `header` and `at` (where it sits in the values, for the message).
+*/}}
+{{- define "xnat.assertCredentialHeader" -}}
+{{- $h := .header -}}
+{{- $at := .at -}}
+{{- $hasValue := and (hasKey $h "value") (not (kindIs "invalid" $h.value)) -}}
+{{- if not $h.name -}}
+{{- fail (printf "%s needs a `name`" $at) -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9-]+$" $h.name) -}}
+{{- fail (printf "%s: header name %q -- want letters, digits and dashes only" $at $h.name) -}}
+{{- end -}}
+{{- if and $h.valueFrom $hasValue -}}
+{{- fail (printf "%s (%s) sets both `value` and `valueFrom` -- pick one" $at $h.name) -}}
+{{- end -}}
+{{- if $h.valueFrom -}}
+{{- if not $h.valueFrom.secretKeyRef -}}
+{{- fail (printf "%s (%s): `valueFrom` needs a `secretKeyRef` (name/key) -- it is the only source supported here" $at $h.name) -}}
+{{- end -}}
+{{- if not $h.valueFrom.secretKeyRef.name -}}
+{{- fail (printf "%s (%s): `valueFrom.secretKeyRef` needs a `name`" $at $h.name) -}}
+{{- end -}}
+{{- if not $h.valueFrom.secretKeyRef.key -}}
+{{- fail (printf "%s (%s): `valueFrom.secretKeyRef` needs a `key` -- the Secret key holding the credential" $at $h.name) -}}
+{{- end -}}
+{{- if and (hasKey $h "valuePrefix") (not (kindIs "string" $h.valuePrefix)) -}}
+{{- fail (printf "%s (%s): `valuePrefix` must be a string -- quote it, as in `valuePrefix: \"Bearer \"`" $at $h.name) -}}
+{{- end -}}
+{{- if regexMatch "[\"$`\\\\\n]" ($h.valuePrefix | default "") -}}
+{{- fail (printf "%s (%s): `valuePrefix` %q cannot contain a quote, backslash, newline, $ or backtick -- it is rendered inside the fetch script's double quotes. A prefix is only meant to be a scheme such as \"Bearer \"; put the rest in the Secret." $at $h.name $h.valuePrefix) -}}
+{{- end -}}
+{{- else -}}
+{{- if not $hasValue -}}
+{{- fail (printf "%s (%s) needs a `value` (a literal; `value:` with nothing after it does not count) or a `valueFrom` (a Secret key)" $at $h.name) -}}
+{{- end -}}
+{{- if not (kindIs "string" $h.value) -}}
+{{- fail (printf "%s (%s): `value` must be a string -- quote it, as in `value: \"2\"`. Unquoted, YAML coerces it before the chart sees it (`yes` becomes true, `1.0` becomes 1) and it reaches the header changed." $at $h.name) -}}
+{{- end -}}
+{{- if regexMatch "['\n]" $h.value -}}
+{{- fail (printf "%s (%s): `value` %q cannot contain a single quote or a newline -- it is rendered as a literal inside the fetch script. Supply it as `valueFrom` a Secret instead." $at $h.name $h.value) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Shell body for a source-form plugin's init container. Fetches the jar to
+<target>.part, optionally checksums it, then moves it into place, so a failed
+fetch or checksum never leaves a jar behind.
+
+Coordinates and urls are both resolved by the chart, so the container only fetches
+a literal url.
+
+Takes a dict of `plugin`, `name`, `repo`, `caCert` (bool) and `installer`.
+*/}}
+{{- define "xnat.pluginFetch" -}}
+{{- $c := .plugin -}}
+{{- $name := .name -}}
+{{- $t := printf "/data/xnat/home/plugins/%s" ($c.target | default (printf "%s.jar" $name)) -}}
+{{- $part := printf "%s.part" $t -}}
+{{- $url := "" -}}
+{{- if ne $c.source "file" -}}
+{{- $url = include "xnat.pluginArtifactUrl" (dict "plugin" $c "name" $name "repo" .repo) -}}
+{{- end -}}
+{{- $d := dict "plugin" $c "name" $name "repo" .repo "installer" .installer "url" $url -}}
+{{- $curl := printf "curl -fsS %s --retry 3 --retry-delay 2 --retry-connrefused" (include "xnat.pluginCurlRedirect" $d) -}}
+{{- if .caCert -}}{{- $curl = printf "%s --cacert /mnt/plugin-ca/ca.crt" $curl -}}{{- end -}}
+{{- $curl = printf "%s%s" $curl (include "xnat.pluginCredentialFlags" $d) -}}
+set -eu
+{{ if eq $c.source "file" -}}
+{{- $src := "" -}}
+{{- if $c.secret -}}
+{{- $src = printf "/mnt/plugin-%s/%s" $name ($c.secret.key | default "plugin.jar") -}}
+{{- else -}}
+{{- $src = required (printf "plugins.%s needs `file` (a path) or `secret` (name/key) for `source: file`" $name) $c.file -}}
+{{- end -}}
+cp {{ $src | quote }} {{ $part | quote }}
+{{- else -}}
+{{ $curl }} -o {{ $part | quote }} {{ $url | quote }}
+{{- end }}
+{{- with $c.sha256 }}
+echo {{ . | quote }}{{ printf "  %s" $part | quote }} | sha256sum -c -
+{{- end }}
+mv {{ $part | quote }} {{ $t | quote }}
+{{- end -}}
+
+{{/*
+securityContext for the plugin/dev init containers. Defaults to the main
+container's .Values.securityContext so they are hardened consistently with the
+rest of the pod -- an unset one would render nothing and be rejected on its own
+by a namespace enforcing the restricted Pod Security Standard, while the s3
+containers (which use .Values.securityContext directly) passed.
+Override via pluginInstaller.securityContext.
+*/}}
+{{- define "xnat.installerSecurityContext" -}}
+{{- toYaml (default .Values.securityContext .Values.pluginInstaller.securityContext) -}}
+{{- end -}}

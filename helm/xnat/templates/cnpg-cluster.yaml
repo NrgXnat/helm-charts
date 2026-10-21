@@ -8,7 +8,7 @@ metadata:
 type: kubernetes.io/basic-auth
 stringData:
   username: {{ .Values.cnpg.cluster.credentials.username }}
-  password: {{ .Values.cnpg.cluster.credentials.password }}
+  password: {{ required "cnpg.cluster.credentials.password is required when cnpg.cluster is enabled without an externalSecret" .Values.cnpg.cluster.credentials.password }}
 {{- end }}
 ---
 apiVersion: postgresql.cnpg.io/v1
@@ -18,8 +18,19 @@ metadata:
   annotations:
     checksum/cnpg-values: {{ .Values.cnpg | toJson | sha256sum }}
 spec:
-  {{- if .Values.cnpg.cluster.affinity }}
-  affinity: {{ .Values.cnpg.cluster.affinity | toYaml | nindent 4 }}
+  {{- if or .Values.cnpg.cluster.affinity .Values.cnpg.cluster.nodeSelector .Values.cnpg.cluster.tolerations }}
+  affinity:
+    {{- with .Values.cnpg.cluster.affinity }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.cnpg.cluster.nodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.cnpg.cluster.tolerations }}
+    tolerations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
   {{- end }}
   instances: {{ .Values.cnpg.cluster.instances }}
   imageName: ghcr.io/cloudnative-pg/postgresql:{{ .Values.cnpg.cluster.version }}

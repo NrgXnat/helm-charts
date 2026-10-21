@@ -1,0 +1,14 @@
+# Same minimal credential guard as default-values.yaml, plus the opt-in
+# `connector` proxy mode with an explicit hostname and no Ingress at all -- the
+# bring-your-own-ingress shape, and the branch where the Connector attributes
+# are patched into server.xml instead of a valve. The default mode
+# (forwardedHeaders, a RemoteIpValve) is exercised by every other fixture,
+# since it needs no configuration.
+cnpg:
+  cluster:
+    credentials:
+      password: "ci-only-placeholder"
+tomcat:
+  proxy:
+    mode: connector
+    host: xnat.example.org

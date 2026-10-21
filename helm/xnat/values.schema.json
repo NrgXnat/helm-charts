@@ -81,6 +81,33 @@
       "additionalProperties": true,
       "properties": { "enabled": { "type": "boolean" } }
     },
+    "tomcat": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "keepAliveTimeout": { "type": ["integer", "null"], "minimum": -1 },
+        "proxy": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "mode": { "type": "string", "enum": ["forwardedHeaders", "connector", "none"] },
+            "internalProxies": { "type": "string" },
+            "protocolHeader": { "type": "string" },
+            "host": { "type": "string" },
+            "port": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
+            "scheme": { "type": "string", "enum": ["http", "https"] }
+          }
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "create": { "type": "boolean" },
+        "automountServiceAccountToken": { "type": ["boolean", "null"] }
+      }
+    },
     "tests": {
       "type": "object",
       "additionalProperties": true,
@@ -89,7 +116,8 @@
         "image": { "type": "string" },
         "path": { "type": "string" },
         "retries": { "type": "integer", "minimum": 1 },
-        "retryDelaySeconds": { "type": "integer", "minimum": 0 }
+        "retryDelaySeconds": { "type": "integer", "minimum": 0 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 }
       }
     },
     "redis": { "type": "object", "additionalProperties": true },
@@ -99,6 +127,31 @@
     "volumes": { "type": "object", "additionalProperties": true },
     "persistence": { "type": "object", "additionalProperties": true },
     "plugins": { "type": ["object", "array"] },
-    "authplugins": { "type": ["object", "array"] }
+    "authplugins": { "type": ["object", "array"] },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "jmx": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "port": { "type": "integer" },
+            "image": { "type": "string" },
+            "agentJarPath": { "type": "string" }
+          }
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "interval": { "type": "string" },
+            "scrapeTimeout": { "type": "string" }
+          }
+        }
+      }
+    }
   }
 }
