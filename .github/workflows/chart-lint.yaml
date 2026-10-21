@@ -68,15 +68,15 @@ jobs:
           for chart in helm/*/; do
             [ -f "${chart}Chart.yaml" ] || continue
             fixtures=("${chart}"ci/*-values.yaml)
-            for v in 1.27.0 1.29.0 1.31.0 1.33.0; do
+            for v in 1.27.0 1.29.0 1.31.0 1.33.0 1.35.0 1.37.0; do
               if [ ${#fixtures[@]} -eq 0 ]; then
                 echo "== $(basename "${chart}") against Kubernetes ${v} =="
-                helm template ci "${chart}" \
+                helm template ci "${chart}" --kube-version "${v}" \
                   | kubeconform -summary -ignore-missing-schemas -kubernetes-version "${v}"
               else
                 for f in "${fixtures[@]}"; do
                   echo "== $(basename "${chart}") [$(basename "${f}")] against Kubernetes ${v} =="
-                  helm template ci "${chart}" --values "${f}" \
+                  helm template ci "${chart}" --values "${f}" --kube-version "${v}" \
                     | kubeconform -summary -ignore-missing-schemas -kubernetes-version "${v}"
                 done
               fi
