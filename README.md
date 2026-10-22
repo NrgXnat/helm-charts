@@ -84,10 +84,10 @@ at pod startup rather than copied into the chart-rendered configuration Secret.
 | Key | Default | Description |
 | --- | --- | --- |
 | `replicaCount` | `1` | XNAT replicas; see the shared-service requirements below. |
-| `image.repository` / `image.tag` | `ghcr.io/nrgxnat/xnat-web` / `1.9.3.7` | XNAT image; an empty tag falls back to the chart's `appVersion`. |
+| `image.repository` / `image.tag` | See [`values.yaml`](helm/xnat/values.yaml) | XNAT image; an empty tag falls back to the chart's `appVersion`. |
 | `resources.requests` | CPU `500m`, memory `2Gi` | Size requests for your workload; no limits are set by default. |
 | `jvm.enabled` | `false` | Inject heap/metaspace options via `JAVA_TOOL_OPTIONS`; keep `maxHeap` below a memory limit. |
-| `probes.*` | TCP on port `8080` | Startup, liveness and readiness probe settings. |
+| `probes.*` | HTTP startup/readiness; TCP liveness on port `8080` | See [Health checks](#health-checks). |
 | `terminationGracePeriodSeconds` / `lifecycle` | `90` / 20-second preStop sleep | Allow load-balancer deregistration before Tomcat shuts down. |
 | `podDisruptionBudget.enabled` | `false` | Renders when enabled with two or more replicas or autoscaling. |
 | `securityContext` / `podSecurityContext` | UID/fsGroup `1000`, dropped capabilities, `RuntimeDefault` seccomp | Non-root container settings; storage must permit writes by this identity. |
@@ -95,7 +95,6 @@ at pod startup rather than copied into the chart-rendered configuration Secret.
 | `redis.enabled` | `false` | Optional dependency; the chart does not wire Redis into XNAT. |
 | `activemq.broker.enabled` | `false` | Deploy an operator-managed ActiveMQ Artemis broker. |
 | `containerService` | `false` | Enable namespace RBAC and service-account token mounting for the container-service plugin. |
-| `tests.enabled` | `true` | Include the connection check run by `helm test`. |
 
 Before running more than one XNAT replica, configure a shared ActiveMQ broker
 and `ReadWriteMany` storage accessible to all replicas. Use the chart-managed
@@ -124,11 +123,9 @@ jobs on other nodes sharing XNAT data, need suitable shared storage. Existing
 claims can be selected with `volumes.<name>.existingClaim`.
 
 The name `default` is a literal class name, not a request to select the cluster's
-default StorageClass. [PR #24](https://github.com/NrgXnat/helm-charts/pull/24)
-proposes different defaults; those changes are not included here. Also ensure
-volume roots are writable by XNAT's UID; `fsGroup` does not handle every storage
-provider. The [upgrade notes](#upgrade-notes) cover ownership, retention, resizing
-and migration of existing data.
+default StorageClass. Ensure volume roots are writable by XNAT's UID; `fsGroup`
+does not handle every storage provider. The [upgrade notes](#upgrade-notes)
+cover ownership, retention, resizing and migration of existing data.
 
 ## Observability
 
@@ -147,32 +144,18 @@ to the XNAT Service, whose default type is `ClusterIP`. Changing the Service to
 `NodePort` or `LoadBalancer` also exposes that port; restrict access with your
 network controls. The chart's Ingress routes only application traffic.
 
-## Helm test
+## Health checks
 
-After installation has finished waiting for XNAT to become ready, run the
-bundled connection check:
+Startup and readiness probes request `/xapi/siteConfig/buildInfo`, XNAT's public
+build-info endpoint, on each pod's HTTP port. This keeps pods out of Service
+traffic until XNAT responds and lets `helm install --wait` wait for application
+HTTP availability. It does not exercise the Ingress or application workflows.
 
-```sh
-helm test my-xnat --namespace xnat
-```
-
-The test runs a Pod that requests `/xapi/siteConfig/buildInfo`, XNAT's public
-build-info endpoint, through the in-cluster Service. This checks HTTP
-reachability; it does not exercise the Ingress or application workflows.
-
-`tests.retries` defaults to 10 attempts, `tests.timeoutSeconds` limits each
-request to 10 seconds, and `tests.retryDelaySeconds` waits 6 seconds between
-failed attempts. Override `tests.path` for a different unauthenticated endpoint,
-or set `tests.enabled: false` to omit the hook. If you change `tests.image`
-(default `busybox:1.36`), the image must provide `sh`, `seq`, `timeout`, `wget`
-and `sleep` and support the configured security context.
-
-Successful test Pods are deleted automatically. A failed Pod remains available
-for inspection until the next test run replaces it:
-
-```sh
-kubectl logs --namespace xnat my-xnat-test-connection
-```
+Set `probes.httpPath` to include a context prefix or select another
+unauthenticated endpoint for a custom image. The `probes.startup` and
+`probes.readiness` settings control their timing and failure thresholds. Startup
+allows 10 minutes by default; raise its threshold for slower installations.
+Liveness stays on TCP so application errors do not trigger container restarts.
 
 ## Contributing
 

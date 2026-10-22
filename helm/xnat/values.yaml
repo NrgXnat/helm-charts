@@ -286,21 +286,6 @@ lifecycle:
     exec:
       command: ["sh", "-c", "sleep 20"]
 
-# `helm test` connection check: a Pod (helm.sh/hook: test) that requests XNAT's
-# public build-info endpoint through the Service. Run it with
-# `helm test <release>`; the hook Pod is only created during a test run.
-tests:
-  enabled: true
-  image: busybox:1.36
-  # Custom images must provide sh, seq, timeout, wget and sleep.
-  # This checks HTTP reachability, not database or plugin health. Override the
-  # path if your deployment uses a context prefix or gates this endpoint.
-  path: /xapi/siteConfig/buildInfo
-  retries: 10
-  retryDelaySeconds: 6
-  # Maximum time for each request, including DNS lookup and redirects.
-  timeoutSeconds: 10
-
 # Prometheus metrics. XNAT/Tomcat exposes no native /metrics, so JVM and Tomcat
 # MBeans are surfaced via the standard Prometheus JMX java agent. Everything
 # here is additive and off by default.
@@ -741,9 +726,12 @@ datasource:
     sslrootcert: "/etc/rds/global-bundle.pem" # path the wrapper reads the CA from; supply via a mounted ConfigMap, do NOT bake into the image (see above)
     wrapperPlugins: "iam"
 
-# TCP-socket probes against the http (8080) port; see statefulset.yaml for why
-# a socket check rather than an HTTP GET on a version-specific health path.
+# Startup/readiness check XNAT's public build-info endpoint on the http port.
+# Liveness checks only the TCP listener to avoid restarting on application errors.
 probes:
+  # Include any context prefix, or select another unauthenticated endpoint for
+  # a custom image. This checks HTTP availability, not application workflows.
+  httpPath: /xapi/siteConfig/buildInfo
   startup:
     # XNAT boots slowly (plugin scan + Hibernate schema migration). 60 * 10s =
     # 10 min of grace before liveness can fire; raise for plugin-heavy sites.

@@ -34,6 +34,7 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "httpPath": { "type": "string" },
         "startup": { "type": "object", "additionalProperties": true },
         "liveness": { "type": "object", "additionalProperties": true },
         "readiness": { "type": "object", "additionalProperties": true }
@@ -106,18 +107,6 @@
       "properties": {
         "create": { "type": "boolean" },
         "automountServiceAccountToken": { "type": ["boolean", "null"] }
-      }
-    },
-    "tests": {
-      "type": "object",
-      "additionalProperties": true,
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "image": { "type": "string" },
-        "path": { "type": "string" },
-        "retries": { "type": "integer", "minimum": 1 },
-        "retryDelaySeconds": { "type": "integer", "minimum": 0 },
-        "timeoutSeconds": { "type": "integer", "minimum": 1 }
       }
     },
     "redis": { "type": "object", "additionalProperties": true },
