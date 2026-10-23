@@ -66,6 +66,9 @@ production examples.
 * **Chart-managed (default):** `cnpg.cluster.enabled: true` creates a CNPG
   `Cluster`. Provide `cnpg.cluster.credentials.password` or an
   `externalSecret` containing CNPG-compatible `username` and `password` keys.
+  This database is for development and testing only: it runs one instance by
+  default, and the chart does not configure backups. Production installations
+  should use an external, production-grade PostgreSQL.
 * **External PostgreSQL:** set `cnpg.cluster.enabled: false` and one of
   `cnpg.external.postgresqlUri` (hostname) or `postgresqlIp`. The database
   name and login still come from `cnpg.cluster.credentials.database` and
@@ -92,7 +95,6 @@ at pod startup rather than copied into the chart-rendered configuration Secret.
 | `podDisruptionBudget.enabled` | `false` | Renders when enabled with two or more replicas or autoscaling. |
 | `securityContext` / `podSecurityContext` | UID/fsGroup `1000`, dropped capabilities, `RuntimeDefault` seccomp | Non-root container settings; storage must permit writes by this identity. |
 | `tomcat.proxy.mode` | `forwardedHeaders` | Handles TLS-terminating proxies; see the upgrade notes. |
-| `redis.enabled` | `false` | Optional dependency; the chart does not wire Redis into XNAT. |
 | `activemq.broker.enabled` | `false` | Deploy an operator-managed ActiveMQ Artemis broker. |
 | `containerService` | `false` | Enable namespace RBAC and service-account token mounting for the container-service plugin. |
 
@@ -162,6 +164,12 @@ Liveness stays on TCP so application errors do not trigger container restarts.
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Upgrade notes
+
+### Redis removed, Postfix relay and PostgreSQL updated
+
+- The `redis` subchart is gone. XNAT never used it: no template passed a Redis address to XNAT, and its Bitnami image is no longer on Docker Hub. A release that set `redis.enabled: true` loses those Redis resources on its next `helm upgrade`. If you wired up Redis yourself, install it as its own release first.
+- The `mail` relay subchart moves from 3.6.1 to 5.1.0, and its `boky/postfix` image from the Alpine-based 3.6.1 to the Debian-based 5.1.0. A release with `mail.enabled: true` restarts the relay. The relay now offers TLS to XNAT (`smtpd_tls_security_level=may`). If XNAT then fails the TLS handshake, set `mail.config.postfix.smtpd_tls_security_level: none`.
+- The default `cnpg.cluster.version` moves from `15.7`, a Debian 11 image that no longer gets updates, to `15.19-standard-trixie`: PostgreSQL 15.19 on Debian 13, in CloudNativePG's `standard` image, which replaces its deprecated `system` image. The chart creates its database with the `C` locale, whose sort order doesn't depend on the OS, so no reindex is needed. To confirm, `SELECT datname, datcollate, datctype FROM pg_database;` should show `C` for XNAT's database. A release on the default restarts its database on the next `helm upgrade`. With one instance, the database is unavailable during the restart. A release that sets its own `cnpg.cluster.version` keeps its image.
 
 ### 5.0 — the default image is XNAT 1.10.2.1
 

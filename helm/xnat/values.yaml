@@ -57,7 +57,7 @@ mailpit:
   replicaCount: 1
   nodeSelector: {}
   tolerations: []
-  image: axllent/mailpit:v1.30.1
+  image: axllent/mailpit:v1.32.0
   maxMessages: 500
   # Matches the xnat container's hardening so the sink also passes
   # "restricted" Pod Security Admission. Override if your image needs root.
@@ -109,24 +109,6 @@ imagePullSecrets: null
 
 nameOverride: ""
 fullnameOverride: ""
-
-# XNAT core does not consume Redis (it uses an on-heap Hibernate L2 cache, and
-# no template wires a Redis host/port into XNAT's config). The legacy Ansible
-# deploy also ran with this off. Left here, off by default, as an optional
-# dependency for setups that wire Redis themselves; enabling it otherwise just
-# schedules an unused pod (and pulls a Bitnami image subject to the public
-# registry's deprecation).
-redis:
-  enabled: false
-  pullPolicy: IfNotPresent
-  master:
-    masterCount: 1
-    persistence:
-      enabled: false
-  replica:
-    replicaCount: 0
-    persistence:
-      enabled: false
 
 serviceAccount:
   # Specifies whether a service account should be created
@@ -515,7 +497,7 @@ pluginInstaller:
   # that is needed -- there is no XNAT-specific installer to build. Override to
   # pin a digest or to name a mirrored ref; air-gapped clusters pull this through
   # their image proxy like any other image.
-  image: curlimages/curl:8.11.1
+  image: curlimages/curl:8.23.0
   # Applied to every source-form init container. The installer needs no
   # capabilities: it writes only to the shared plugins volume.
   securityContext: {}
@@ -552,14 +534,14 @@ pluginInstaller:
   #        value: application/octet-stream
   # S3 plugin install via `aws s3 cp` (no custom image) using the pod's IRSA
   # role -- set serviceAccount.annotations."eks.amazonaws.com/role-arn".
-  # `image` is a stock AWS CLI image (pin a tag in production). Two modes:
+  # `image` is a stock AWS CLI image. Two modes:
   #   - per-plugin: a plugins entry with `source: s3` (URI defaults to
   #     s3://<bucket>/<prefix>/<target>, or per-plugin s3Uri).
   #   - syncPrefix: true -> ONE init container copies the whole
   #     s3://<bucket>/<prefix>/ tree into the plugins dir. The plugin set is
   #     whatever is staged there -- no per-plugin list (leave plugins: {}).
   s3:
-    image: public.ecr.aws/aws-cli/aws-cli:latest
+    image: public.ecr.aws/aws-cli/aws-cli:2.38.5
     bucket: ""
     prefix: ""
     region: ""
@@ -636,14 +618,18 @@ dicom_scp:
       # loadBalancerIp: "130.95.27.91"
 
 cnpg:
+  # The chart-managed cluster is for development and testing only: it runs one
+  # instance by default, and the chart does not configure backups. For production,
+  # set cluster.enabled: false and point cnpg.external at a production-grade PostgreSQL.
   cluster:
     affinity: {}
     enabled: true # Set to false to use your own DB
     name: "" # Defaults to "{release-name}-postgres"
     instances: 1
-    # Pin a patch tag for reproducible builds. PG16+ is fine for new installs,
+    # Tag of ghcr.io/cloudnative-pg/postgresql: <PostgreSQL version>-<image type>-<Debian
+    # release>. Pin a patch tag for reproducible builds. PG16+ is fine for new installs,
     # but bumping the major on an existing cluster forces a major upgrade.
-    version: "15.7"
+    version: "15.19-standard-trixie"
     storage:
       size: "50Gi"
       storageClass: "default"
