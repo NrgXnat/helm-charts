@@ -165,7 +165,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Upgrade notes
 
-### 6.0 — Redis removed, Postfix relay and PostgreSQL updated
+### Redis removed, Postfix relay and PostgreSQL updated
 
 - The `redis` subchart is gone. XNAT never used it: no template passed a Redis address to XNAT, and its Bitnami image is no longer on Docker Hub. A release that set `redis.enabled: true` loses those Redis resources on its next `helm upgrade`. If you wired up Redis yourself, install it as its own release first.
 - The `mail` relay subchart moves from 3.6.1 to 5.1.0, and its `boky/postfix` image from the Alpine-based 3.6.1 to the Debian-based 5.1.0. A release with `mail.enabled: true` restarts the relay. The relay now offers TLS to XNAT (`smtpd_tls_security_level=may`). If XNAT then fails the TLS handshake, set `mail.config.postfix.smtpd_tls_security_level: none`.
