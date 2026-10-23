@@ -163,6 +163,25 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Upgrade notes
 
+### 5.0 — the default image is XNAT 1.10.2.1
+
+The default image moves from `ghcr.io/nrgxnat/xnat-web:1.9.3.7` to
+`ghcr.io/nrgxnat/xnat:1.10.2.1`. Both 1.10.2.1 and 1.9.3.9 are security hotfix
+releases (GHSA-wffp-hcqx-pr84). A release that sets `image.repository` and
+`image.tag` keeps its image. A release that uses the default upgrades from XNAT
+1.9 to 1.10 on its next `helm upgrade`, so before upgrading:
+
+- Back up the database. XNAT 1.10 updates the schema when it first starts.
+- Make sure every plugin has a build for XNAT 1.10.
+
+To stay on 1.9, pin the 1.9 hotfix image:
+
+```yaml
+image:
+  repository: ghcr.io/nrgxnat/xnat-web
+  tag: "1.9.3.9"
+```
+
 ### Startup and readiness now require an HTTP response
 
 Startup and readiness probes previously checked only the TCP listener. They now
