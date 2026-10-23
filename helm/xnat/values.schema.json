@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "title": "XNAT Helm chart values",
-  "description": "Intentionally permissive: type-checks the most error-prone keys (booleans, counts, the new resource/jvm/pdb/probe blocks) without forbidding the many additional keys consumers legitimately set (external CNPG, redis image overrides, plugin/authplugin maps, extra volumes). No properties are required and unknown keys are allowed.",
+  "description": "Intentionally permissive: type-checks the most error-prone keys (booleans, counts, the new resource/jvm/pdb/probe blocks) without forbidding the many additional keys consumers legitimately set (external CNPG, plugin/authplugin maps, extra volumes). No properties are required and unknown keys are allowed.",
   "type": "object",
   "additionalProperties": true,
   "properties": {
@@ -109,7 +109,6 @@
         "automountServiceAccountToken": { "type": ["boolean", "null"] }
       }
     },
-    "redis": { "type": "object", "additionalProperties": true },
     "cnpg": { "type": "object", "additionalProperties": true },
     "activemq": { "type": "object", "additionalProperties": true },
     "mail": { "type": "object", "additionalProperties": true },

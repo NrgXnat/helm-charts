@@ -92,7 +92,6 @@ at pod startup rather than copied into the chart-rendered configuration Secret.
 | `podDisruptionBudget.enabled` | `false` | Renders when enabled with two or more replicas or autoscaling. |
 | `securityContext` / `podSecurityContext` | UID/fsGroup `1000`, dropped capabilities, `RuntimeDefault` seccomp | Non-root container settings; storage must permit writes by this identity. |
 | `tomcat.proxy.mode` | `forwardedHeaders` | Handles TLS-terminating proxies; see the upgrade notes. |
-| `redis.enabled` | `false` | Optional dependency; the chart does not wire Redis into XNAT. |
 | `activemq.broker.enabled` | `false` | Deploy an operator-managed ActiveMQ Artemis broker. |
 | `containerService` | `false` | Enable namespace RBAC and service-account token mounting for the container-service plugin. |
 
@@ -162,6 +161,12 @@ Liveness stays on TCP so application errors do not trigger container restarts.
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Upgrade notes
+
+### Redis removed, Postfix relay and PostgreSQL updated
+
+- The `redis` subchart is gone. XNAT never used it: no template passed a Redis address to XNAT, and its Bitnami image is no longer on Docker Hub. A release that set `redis.enabled: true` loses those Redis resources on its next `helm upgrade`. If you wired up Redis yourself, install it as its own release first.
+- The `mail` relay subchart moves from 3.6.1 to 5.1.0, and its image from the Alpine-based `boky/postfix:v3.6.1` to the Debian-based `boky/postfix:v5.1.0`. A release with `mail.enabled: true` restarts the relay. The relay now offers TLS to XNAT (`smtpd_tls_security_level=may`). If XNAT then fails the TLS handshake, set `mail.config.postfix.smtpd_tls_security_level: none`.
+- The default `cnpg.cluster.version` moves from 15.7 to 15.19. Both images are built on Debian 11, so text sort order doesn't change and no reindex is needed. A release on the default restarts its database on the next `helm upgrade`. With one instance, the database is unavailable during the restart.
 
 ### 5.0 — the default image is XNAT 1.10.2.1
 
