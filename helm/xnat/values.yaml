@@ -618,6 +618,9 @@ dicom_scp:
       # loadBalancerIp: "130.95.27.91"
 
 cnpg:
+  # The chart-managed cluster is for development and testing only (one instance,
+  # no backups). For production, set cluster.enabled: false and point
+  # cnpg.external at a production-grade PostgreSQL.
   cluster:
     affinity: {}
     enabled: true # Set to false to use your own DB

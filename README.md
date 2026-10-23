@@ -66,6 +66,9 @@ production examples.
 * **Chart-managed (default):** `cnpg.cluster.enabled: true` creates a CNPG
   `Cluster`. Provide `cnpg.cluster.credentials.password` or an
   `externalSecret` containing CNPG-compatible `username` and `password` keys.
+  This database is for development and testing only: by default it runs one
+  instance with no backups. Production installations should use an external,
+  production-grade PostgreSQL.
 * **External PostgreSQL:** set `cnpg.cluster.enabled: false` and one of
   `cnpg.external.postgresqlUri` (hostname) or `postgresqlIp`. The database
   name and login still come from `cnpg.cluster.credentials.database` and
