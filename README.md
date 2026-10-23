@@ -163,6 +163,25 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Upgrade notes
 
+### Startup and readiness now require an HTTP response
+
+Startup and readiness probes previously checked only the TCP listener. They now
+request `/xapi/siteConfig/buildInfo` on each pod's HTTP port; liveness remains
+TCP. Before upgrading a release that uses a custom image or a context prefix,
+set `probes.httpPath` to an unauthenticated endpoint served by that image. For
+example, if XNAT runs under `/xnat`:
+
+```yaml
+probes:
+  httpPath: /xnat/xapi/siteConfig/buildInfo
+```
+
+Use the path served directly by the pod, including its context prefix, rather
+than a path rewritten by the Ingress. If the endpoint does not respond
+successfully, the pod stays unready and receives no Service traffic; repeated
+startup-probe failures eventually restart the container. Helm upgrades using
+`--wait` can time out. See [Health checks](#health-checks) for probe timing.
+
 ### Container service: the `cs-ready` ClusterRole and binding are gone
 
 `containerService: true` no longer renders the ClusterRole and
