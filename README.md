@@ -169,7 +169,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - The `redis` subchart is gone. XNAT never used it: no template passed a Redis address to XNAT, and its Bitnami image is no longer on Docker Hub. A release that set `redis.enabled: true` loses those Redis resources on its next `helm upgrade`. If you wired up Redis yourself, install it as its own release first.
 - The `mail` relay subchart moves from 3.6.1 to 5.1.0, and its image from the Alpine-based `boky/postfix:v3.6.1` to the Debian-based `boky/postfix:v5.1.0`. A release with `mail.enabled: true` restarts the relay. The relay now offers TLS to XNAT (`smtpd_tls_security_level=may`). If XNAT then fails the TLS handshake, set `mail.config.postfix.smtpd_tls_security_level: none`.
-- The default `cnpg.cluster.version` moves from 15.7 to 15.19. Both images are built on Debian 11, so text sort order doesn't change and no reindex is needed. A release on the default restarts its database on the next `helm upgrade`. With one instance, the database is unavailable during the restart.
+- The default `cnpg.cluster.version` moves from `15.7`, a Debian 11 image that no longer gets updates, to `15.19-standard-trixie`: PostgreSQL 15.19 on Debian 13, in CloudNativePG's `standard` image, which replaces its deprecated `system` image. The chart creates its database with the `C` locale, whose sort order doesn't depend on the OS, so no reindex is needed. To confirm, `SELECT datcollate, datctype FROM pg_database WHERE datname = 'xnat-web';` should return `C` for both. A release on the default restarts its database on the next `helm upgrade`. With one instance, the database is unavailable during the restart. A release that sets its own `cnpg.cluster.version` keeps its image.
 
 ### 5.0 — the default image is XNAT 1.10.2.1
 

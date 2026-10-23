@@ -626,9 +626,10 @@ cnpg:
     enabled: true # Set to false to use your own DB
     name: "" # Defaults to "{release-name}-postgres"
     instances: 1
-    # Pin a patch tag for reproducible builds. PG16+ is fine for new installs,
+    # Tag of ghcr.io/cloudnative-pg/postgresql: <PostgreSQL version>-<image type>-<Debian
+    # release>. Pin a patch tag for reproducible builds. PG16+ is fine for new installs,
     # but bumping the major on an existing cluster forces a major upgrade.
-    version: "15.19"
+    version: "15.19-standard-trixie"
     storage:
       size: "50Gi"
       storageClass: "default"
