@@ -1,29 +1,186 @@
-# Quick start
+# XNAT Helm chart
 
-Requires:
+Deploys [XNAT](https://www.xnat.org), an imaging informatics platform, on
+Kubernetes as a `StatefulSet` behind a `Service`. PostgreSQL is provided by a
+chart-managed [CloudNativePG](https://cloudnative-pg.io) `Cluster` or an
+external database; the CloudNativePG operator is installed separately.
 
-* existing Kubernetes (k8s) service with the following:
-  * internal DNS provider
-  * Ingress controller
-  * Role Based Access Control (RBAC)
-  * default Storage Class for persistent volumes
-  * [Ark-mq Operator](https://github.com/arkmq-org/activemq-artemis-operator/blob/main/docs/getting-started/quick-start.md) is required for automated Active MQ Artemis installation.
-* Workstation with the following:
-  * `kubectl` client configured to control your k8s service
-  * `helm` client
+## Prerequisites
+
+* Kubernetes 1.27 or newer, with internal DNS and RBAC.
+* Storage classes that support the chosen access modes. The defaults request
+  `ReadWriteMany` on a class literally named `default`; see [Storage](#storage).
+* The [CloudNativePG operator](https://cloudnative-pg.io/documentation/), unless
+  `cnpg.cluster.enabled: false` selects an external database.
+* An Ingress controller if `ingress.enabled` is set.
+* The [Ark-mq operator](https://github.com/arkmq-org/activemq-artemis-operator)
+  if `activemq.broker.enabled` is set.
+* The [Prometheus Operator](https://github.com/prometheus-operator/prometheus-operator)
+  CRDs if `metrics.serviceMonitor.enabled` is set.
+* `kubectl` configured for the cluster and Helm 3.8 or newer for OCI installs.
 
 ## Install
 
-Released charts are published to GitHub Container Registry as OCI artifacts (Helm 3.8+):
+Create a `my-values.yaml` file with database credentials and storage settings
+for your cluster. For a new chart-managed database, the minimum credential
+configuration is:
 
-```sh
-helm install my-xnat oci://ghcr.io/nrgxnat/charts/xnat --version <version>
+```yaml
+cnpg:
+  cluster:
+    credentials:
+      password: replace-with-a-unique-database-password
 ```
 
-Omit `--version` to pull the latest. Chart versions are assigned automatically on
-merge to `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#versioning-automated).
+An existing Secret can supply the password instead; see
+[Database modes](#database-modes). Set the storage classes and access modes as
+described in [Storage](#storage) before installing.
+
+Released charts are published to GitHub Container Registry as OCI artifacts:
+
+```sh
+helm install my-xnat oci://ghcr.io/nrgxnat/charts/xnat --version <version> \
+  --namespace xnat --create-namespace --values my-values.yaml \
+  --wait --timeout 15m
+```
+
+Omit `--version` to pull the latest. Chart versions are assigned automatically
+on merge to `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#versioning-automated).
+To install the chart from a source checkout instead:
+
+```sh
+helm dependency build ./helm/xnat
+helm install my-xnat ./helm/xnat \
+  --namespace xnat --create-namespace --values my-values.yaml \
+  --wait --timeout 15m
+```
+
+Read the [upgrade notes](#upgrade-notes) before upgrading an existing release,
+particularly before changing the storage layout. The full configuration
+reference is [`values.yaml`](helm/xnat/values.yaml). The values under
+[`ci/`](helm/xnat/ci/) are rendering fixtures with throwaway credentials, not
+production examples.
+
+## Database modes
+
+* **Chart-managed (default):** `cnpg.cluster.enabled: true` creates a CNPG
+  `Cluster`. Provide `cnpg.cluster.credentials.password` or an
+  `externalSecret` containing CNPG-compatible `username` and `password` keys.
+* **External PostgreSQL:** set `cnpg.cluster.enabled: false` and one of
+  `cnpg.external.postgresqlUri` (hostname) or `postgresqlIp`. The database
+  name and login still come from `cnpg.cluster.credentials.database` and
+  `username`; set `password` or `externalSecret` for its password. With an
+  external database, `externalSecretPasswordKey` can select a different key.
+* **RDS IAM:** `datasource.iam.enabled` selects passwordless IAM authentication
+  for an external database. This needs a compatible XNAT image, an IAM identity,
+  database permissions and TLS configuration; see the `datasource.iam` comments
+  in [`values.yaml`](helm/xnat/values.yaml).
+
+An `externalSecret` must exist in the release namespace. Its password is read
+at pod startup rather than copied into the chart-rendered configuration Secret.
+
+## Configuration highlights
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `replicaCount` | `1` | XNAT replicas; see the shared-service requirements below. |
+| `image.repository` / `image.tag` | See [`values.yaml`](helm/xnat/values.yaml) | XNAT image; an empty tag falls back to the chart's `appVersion`. |
+| `resources.requests` | CPU `500m`, memory `2Gi` | Size requests for your workload; no limits are set by default. |
+| `jvm.enabled` | `false` | Inject heap/metaspace options via `JAVA_TOOL_OPTIONS`; keep `maxHeap` below a memory limit. |
+| `probes.*` | HTTP startup/readiness; TCP liveness on port `8080` | See [Health checks](#health-checks). |
+| `terminationGracePeriodSeconds` / `lifecycle` | `90` / 20-second preStop sleep | Allow load-balancer deregistration before Tomcat shuts down. |
+| `podDisruptionBudget.enabled` | `false` | Renders when enabled with two or more replicas or autoscaling. |
+| `securityContext` / `podSecurityContext` | UID/fsGroup `1000`, dropped capabilities, `RuntimeDefault` seccomp | Non-root container settings; storage must permit writes by this identity. |
+| `tomcat.proxy.mode` | `forwardedHeaders` | Handles TLS-terminating proxies; see the upgrade notes. |
+| `redis.enabled` | `false` | Optional dependency; the chart does not wire Redis into XNAT. |
+| `activemq.broker.enabled` | `false` | Deploy an operator-managed ActiveMQ Artemis broker. |
+| `containerService` | `false` | Enable namespace RBAC and service-account token mounting for the container-service plugin. |
+
+Before running more than one XNAT replica, configure a shared ActiveMQ broker
+and `ReadWriteMany` storage accessible to all replicas. Use the chart-managed
+broker above, or configure an external broker through `extraConfig`. Increasing
+`replicaCount` alone does not configure these requirements.
+
+## Storage
+
+The default data layout is:
+
+| Volume | Mount | Size | Access mode | Storage class |
+| --- | --- | --- | --- | --- |
+| `volumes.xnatdata` | `/data/xnat` | `1Ti` | `ReadWriteMany` | `default` |
+| `volumes.build` | `/data/xnat/build` | `100Gi` | `ReadWriteMany` | `default` |
+| `cnpg.cluster.storage` | PostgreSQL data, managed by CNPG | `50Gi` | Managed by CNPG | `default` |
+
+`archive`, `prearchive` and `cache` are directories on `xnatdata` by default.
+Setting `volumes.<name>.size` or `existingClaim` mounts that directory from a
+separate claim. A single mount lets XNAT rename data from prearchive to archive
+without copying it across mount points.
+
+Override `volumes.<name>.storageClass` and `accessMode` for your storage provider;
+set `cnpg.cluster.storage.storageClass` separately. A single-replica installation
+can use `ReadWriteOnce` data volumes. Multiple XNAT replicas, or container-service
+jobs on other nodes sharing XNAT data, need suitable shared storage. Existing
+claims can be selected with `volumes.<name>.existingClaim`.
+
+The name `default` is a literal class name, not a request to select the cluster's
+default StorageClass. Ensure volume roots are writable by XNAT's UID; `fsGroup`
+does not handle every storage provider. The [upgrade notes](#upgrade-notes)
+cover ownership, retention, resizing and migration of existing data.
+
+## Observability
+
+`logConsole` defaults to `plain`, setting `XNAT_LOG_CONSOLE` for images that
+support it; `json` selects structured console logging and an empty value leaves
+the image's logging configuration unchanged. Older images may ignore it.
+
+`metrics.jmx.enabled` attaches a Prometheus JMX Java agent. Supply an image
+containing the agent jar via `metrics.jmx.image` and its path via
+`metrics.jmx.agentJarPath`. The default rules select core JVM and Tomcat MBeans.
+Enable `metrics.serviceMonitor.enabled` to create a `ServiceMonitor` for the
+Prometheus Operator.
+
+The metrics endpoint is unauthenticated on port `9404` by default and is added
+to the XNAT Service, whose default type is `ClusterIP`. Changing the Service to
+`NodePort` or `LoadBalancer` also exposes that port; restrict access with your
+network controls. The chart's Ingress routes only application traffic.
+
+## Health checks
+
+Startup and readiness probes request `/xapi/siteConfig/buildInfo`, XNAT's public
+build-info endpoint, on each pod's HTTP port. This keeps pods out of Service
+traffic until XNAT responds and lets `helm install --wait` wait for application
+HTTP availability. It does not exercise the Ingress or application workflows.
+
+Set `probes.httpPath` to include a context prefix or select another
+unauthenticated endpoint for a custom image. The `probes.startup` and
+`probes.readiness` settings control their timing and failure thresholds. Startup
+allows 10 minutes by default; raise its threshold for slower installations.
+Liveness stays on TCP so application errors do not trigger container restarts.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Upgrade notes
+
+### Startup and readiness now require an HTTP response
+
+Startup and readiness probes previously checked only the TCP listener. They now
+request `/xapi/siteConfig/buildInfo` on each pod's HTTP port; liveness remains
+TCP. Before upgrading a release that uses a custom image or a context prefix,
+set `probes.httpPath` to an unauthenticated endpoint served by that image. For
+example, if XNAT runs under `/xnat`:
+
+```yaml
+probes:
+  httpPath: /xnat/xapi/siteConfig/buildInfo
+```
+
+Use the path served directly by the pod, including its context prefix, rather
+than a path rewritten by the Ingress. If the endpoint does not respond
+successfully, the pod stays unready and receives no Service traffic; repeated
+startup-probe failures eventually restart the container. Helm upgrades using
+`--wait` can time out. See [Health checks](#health-checks) for probe timing.
 
 ### Container service: the `cs-ready` ClusterRole and binding are gone
 

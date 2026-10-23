@@ -91,11 +91,8 @@ spec:
               containerPort: {{ .Values.metrics.jmx.port }}
               protocol: TCP
             {{- end }}
-          # Probes use a TCP socket on the http port rather than an HTTP GET:
-          # XNAT's health path varies by version and the old default
-          # (/app/template/Login.vm#!) 404s on current xnat-web, while the #!
-          # fragment is never sent server-side. "Is Tomcat accepting on 8080?"
-          # is the version-agnostic readiness signal.
+          # HTTP startup/readiness wait for XNAT, not just Tomcat's listener.
+          # Keep liveness on TCP so transient application failures do not restart it.
           livenessProbe:
             tcpSocket:
               port: http
@@ -103,13 +100,15 @@ spec:
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: {{ .Values.probes.httpPath | quote }}
               port: http
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
           startupProbe:
-            tcpSocket:
+            httpGet:
+              path: {{ .Values.probes.httpPath | quote }}
               port: http
             failureThreshold: {{ .Values.probes.startup.failureThreshold }}
             periodSeconds: {{ .Values.probes.startup.periodSeconds }}

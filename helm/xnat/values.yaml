@@ -726,9 +726,12 @@ datasource:
     sslrootcert: "/etc/rds/global-bundle.pem" # path the wrapper reads the CA from; supply via a mounted ConfigMap, do NOT bake into the image (see above)
     wrapperPlugins: "iam"
 
-# TCP-socket probes against the http (8080) port; see statefulset.yaml for why
-# a socket check rather than an HTTP GET on a version-specific health path.
+# Startup/readiness check XNAT's public build-info endpoint on the http port.
+# Liveness checks only the TCP listener to avoid restarting on application errors.
 probes:
+  # Include any context prefix, or select another unauthenticated endpoint for
+  # a custom image. This checks HTTP availability, not application workflows.
+  httpPath: /xapi/siteConfig/buildInfo
   startup:
     # XNAT boots slowly (plugin scan + Hibernate schema migration). 60 * 10s =
     # 10 min of grace before liveness can fire; raise for plugin-heavy sites.

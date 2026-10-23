@@ -34,6 +34,7 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "httpPath": { "type": "string" },
         "startup": { "type": "object", "additionalProperties": true },
         "liveness": { "type": "object", "additionalProperties": true },
         "readiness": { "type": "object", "additionalProperties": true }
