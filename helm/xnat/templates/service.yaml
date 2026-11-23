@@ -54,17 +54,19 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.dicom_scp.serviceType | quote }}
+  {{- $serviceType := .Values.dicom_scp.serviceType }}
+  {{- with include "xnat.dicomScpLoadBalancerIP" . }}
+  {{- if eq $serviceType "LoadBalancer" }}
+  loadBalancerIP: {{ . | quote }}
+  {{- end }}
+  {{- end }}
   ports:
-    {{- $serviceType := .Values.dicom_scp.serviceType }}
-    {{- range .Values.dicom_scp.recievers }}
-    - name: {{ lower .ae_title }}-dicom
+    {{- range include "xnat.dicomScpPorts" . | fromJsonArray }}
+    - name: {{ .port }}-dicom
       port: {{ .port }}
       targetPort: {{ .port }}
       {{- if and (eq $serviceType "NodePort") .nodePort }}
       nodePort: {{ .nodePort }}
-      {{- end }}
-      {{- if and (eq $serviceType "LoadBalancer") .loadBalancerIP }}
-      loadBalancerIP: {{ .loadBalancerIP }}
       {{- end }}
     {{- end }}
   selector:
