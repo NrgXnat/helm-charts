@@ -1,0 +1,15 @@
+# A LoadBalancer Service whose IP is set on one of the receivers.
+cnpg:
+  cluster:
+    credentials:
+      password: "ci-only-placeholder"
+dicom_scp:
+  serviceType: "LoadBalancer"
+  recievers:
+    - ae_title: "XNAT"
+      port: 8104
+    - ae_title: "OTHER_AE"
+      port: 8104
+      loadBalancerIP: "10.0.0.5"
+    - ae_title: "XNAT"
+      port: 8105

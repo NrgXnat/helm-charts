@@ -632,29 +632,45 @@ Override via pluginInstaller.securityContext.
 {{- end -}}
 
 {{/*
-The DICOM SCP Service's ports, as a JSON list of {port, nodePort,
-loadBalancerIP}: one per distinct receiver port, since XNAT serves every AE
-title on a port from one listener.
+The DICOM SCP Service's ports, as a JSON list of {port, nodePort}: one per
+distinct receiver port, since XNAT serves every AE title on a port from one
+listener.
 */}}
 {{- define "xnat.dicomScpPorts" -}}
 {{- $ports := list -}}
 {{- $byPort := dict -}}
-{{- range $r := .Values.dicom_scp.recievers -}}
-{{- $key := toString (int $r.port) -}}
+{{- range .Values.dicom_scp.recievers -}}
+{{- $key := toString (int .port) -}}
 {{- $p := get $byPort $key -}}
 {{- if not $p -}}
-{{- $p = dict "port" (int $r.port) -}}
+{{- $p = dict "port" (int .port) -}}
 {{- $_ := set $byPort $key $p -}}
 {{- $ports = append $ports $p -}}
 {{- end -}}
-{{- range $field := list "nodePort" "loadBalancerIP" -}}
-{{- with get $r $field -}}
-{{- if and (hasKey $p $field) (ne (toString (get $p $field)) (toString .)) -}}
-{{- fail (printf "dicom_scp.recievers: the receivers on port %s set different %ss" $key $field) -}}
+{{- with .nodePort -}}
+{{- if and $p.nodePort (ne (int $p.nodePort) (int .)) -}}
+{{- fail (printf "dicom_scp.recievers: the receivers on port %s set different nodePorts" $key) -}}
 {{- end -}}
-{{- $_ := set $p $field . -}}
-{{- end -}}
+{{- $_ := set $p "nodePort" (int .) -}}
 {{- end -}}
 {{- end -}}
 {{- toJson $ports -}}
+{{- end -}}
+
+{{/*
+The DICOM SCP Service's loadBalancerIP: the one value its receivers set, since
+a Service has a single load-balancer IP.
+*/}}
+{{- define "xnat.dicomScpLoadBalancerIP" -}}
+{{- $ips := list -}}
+{{- range .Values.dicom_scp.recievers -}}
+{{- with .loadBalancerIP -}}
+{{- $ips = append $ips (toString .) -}}
+{{- end -}}
+{{- end -}}
+{{- $ips = uniq $ips -}}
+{{- if gt (len $ips) 1 -}}
+{{- fail (printf "dicom_scp.recievers set different loadBalancerIPs (%s); the Service has one" (join ", " $ips)) -}}
+{{- end -}}
+{{- join "" $ips -}}
 {{- end -}}

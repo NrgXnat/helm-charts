@@ -616,7 +616,7 @@ dicom_scp:
     - ae_title: "XNAT"
       port: 8104
       # nodePort: 32514
-      # loadBalancerIp: "130.95.27.91"
+      # loadBalancerIP: "130.95.27.91"  # one per Service, from any receiver
 
 cnpg:
   # The chart-managed cluster is for development and testing only: it runs one
