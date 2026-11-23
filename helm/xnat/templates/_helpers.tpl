@@ -630,3 +630,31 @@ Override via pluginInstaller.securityContext.
 {{- define "xnat.installerSecurityContext" -}}
 {{- toYaml (default .Values.securityContext .Values.pluginInstaller.securityContext) -}}
 {{- end -}}
+
+{{/*
+The DICOM SCP Service's ports, as a JSON list of {port, nodePort,
+loadBalancerIP}: one per distinct receiver port, since XNAT serves every AE
+title on a port from one listener.
+*/}}
+{{- define "xnat.dicomScpPorts" -}}
+{{- $ports := list -}}
+{{- $byPort := dict -}}
+{{- range $r := .Values.dicom_scp.recievers -}}
+{{- $key := toString (int $r.port) -}}
+{{- $p := get $byPort $key -}}
+{{- if not $p -}}
+{{- $p = dict "port" (int $r.port) -}}
+{{- $_ := set $byPort $key $p -}}
+{{- $ports = append $ports $p -}}
+{{- end -}}
+{{- range $field := list "nodePort" "loadBalancerIP" -}}
+{{- with get $r $field -}}
+{{- if and (hasKey $p $field) (ne (toString (get $p $field)) (toString .)) -}}
+{{- fail (printf "dicom_scp.recievers: the receivers on port %s set different %ss" $key $field) -}}
+{{- end -}}
+{{- $_ := set $p $field . -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toJson $ports -}}
+{{- end -}}

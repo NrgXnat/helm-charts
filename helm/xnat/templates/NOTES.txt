@@ -20,13 +20,12 @@
   kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:$CONTAINER_PORT
 {{- end }}
 {{- if .Values.dicom_scp.recievers }}
-2. Get the DICOM C-STORE Service Class Provider (SCP) recievers details by running these commands:
+2. Get the DICOM C-STORE Service Class Provider (SCP) receiver addresses by running these commands:
 {{- if contains "NodePort" .Values.dicom_scp.serviceType }}
-  {{- $context := . }}
-  {{- range .Values.dicom_scp.recievers }}
-  export NODE_PORT=$(kubectl get --namespace {{ $.Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "xnat.fullname" $context }}-dicom-scp)
-  export NODE_IP=$(kubectl get nodes --namespace {{ $.Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
-  echo http://$NODE_IP:$NODE_PORT
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  {{- range include "xnat.dicomScpPorts" . | fromJsonArray }}
+  export NODE_PORT=$(kubectl get --namespace {{ $.Release.Namespace }} -o jsonpath="{.spec.ports[?(@.port=={{ .port }})].nodePort}" services {{ include "xnat.fullname" $ }}-dicom-scp)
+  echo "port {{ .port }}: $NODE_IP:$NODE_PORT"
   {{- end }}
 {{- end }}
 {{- end }}

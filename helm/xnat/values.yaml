@@ -611,6 +611,7 @@ dicom_scp:
   annotations: {}
   #  metallb.universe.tf/address-pool: production-public-ips
   #  metallb.universe.tf/allow-shared-ip: true
+  # The Service exposes each receiver port once, so receivers may share a port.
   recievers:
     - ae_title: "XNAT"
       port: 8104

@@ -1,0 +1,14 @@
+# Receivers sharing a port, plus a second port with a fixed nodePort.
+cnpg:
+  cluster:
+    credentials:
+      password: "ci-only-placeholder"
+dicom_scp:
+  recievers:
+    - ae_title: "XNAT"
+      port: 8104
+    - ae_title: "OTHER_AE"
+      port: 8104
+    - ae_title: "XNAT"
+      port: 8105
+      nodePort: 30105
